@@ -21,10 +21,10 @@ class VideoSegmentor():
             segmented_rgbs.append(segmented_rgb)
         return np.stack(segmented_rgbs)
 
-  if __name__ == "__main__":
-      video_segmentor = VideoSegmentor()
-      exmaple_video = None
-      output = video_segmentor.segment_video(exmaple_video)
-      save_array_to_video(output, save_path)
+if __name__ == "__main__":
+    video_segmentor = VideoSegmentor()
+    exmaple_video = None
+    output = video_segmentor.segment_video(exmaple_video)
+    save_array_to_video(output, save_path)
       
       
