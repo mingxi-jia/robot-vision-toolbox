@@ -8,5 +8,6 @@ export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/l
 - [x] sam segmentor
 - [x] single-view video segmentation
 - [x] point cloud projection
+- [ ] realtime cloud visualization
 - [ ] multi-view video sementation
-- [ ] multi-view rgbd segmentatio to segmented point clouds
+- [ ] multi-view rgbd segmentation to segmented point clouds

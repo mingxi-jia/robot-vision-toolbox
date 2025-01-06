@@ -8,7 +8,7 @@ import torch
 from sam2.build_sam import build_sam2_camera_predictor
 from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-from segmentors.utils import show_points, show_mask, visualize_prompt
+from segmentors.utils import show_points, show_mask, visualize_prompt, project_rgb_and_mask_to_cloud
 from segmentors.configs import GRIPPER_ID, POINT_PROMPTS, POINT_PROMPT_LABELS
 
 def blend_rgb_and_mask_for_visualization(current_frame, segmentation_mask):
@@ -82,6 +82,7 @@ class SamVideoSegmentor():
                 segmentation_vis.save(os.path.join(mask_vis_path, f"{out_frame_idx}.jpg"), "JPEG")
             np.save(os.path.join(video_root, 'masks.npy'), video_segments)
 
+#-----demo functions-----
 def segment_entire_video():
     segmentor = SamVideoSegmentor()
     # ---------seting up prompts-----------
@@ -109,6 +110,25 @@ def track_video_frames():
             break
     cv2.destroyAllWindows()
 
+def track_cloud_frames():
+    segmentor = SamVideoSegmentor()
+
+    camera_name = 'dave'
+    video_path = './example_data/episode_0000/rgbs'
+    depth_path = './example_data/episode_0000/depths'
+    gripper_id, point_prompts, prompt_labels = GRIPPER_ID, POINT_PROMPTS[camera_name], POINT_PROMPT_LABELS[camera_name]
+    frame_names = os.listdir(video_path)
+    frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
+
+    for i in range(len(frame_names)):
+        current_frame = np.asarray(Image.open(os.path.join(video_path, f"{i}.jpg")))
+        mask = segmentor.tracking(current_frame, gripper_id, point_prompts, prompt_labels)
+        frame = blend_rgb_and_mask_for_visualization(current_frame, mask)
+
+        current_depth = np.asarray(Image.open(os.path.join(depth_path, f"{i}.jpg")))
+        seg_cloud = project_rgb_and_mask_to_cloud(current_frame, current_depth, mask, camera_name)
+        
+        #TODO: realtime cloud visualization
 
 if __name__ == "__main__":
     # segment_entire_video()
