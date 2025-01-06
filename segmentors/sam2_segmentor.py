@@ -77,7 +77,7 @@ class SamVideoSegmentor():
                 # visualization
                 segmentation_mask = (out_mask_logits[0][0] > 0.0).cpu().numpy()
                 current_frame = np.asarray(Image.open(os.path.join(video_dir, f"{out_frame_idx}.jpg")))
-                segmentation_vis = blend_rgb_and_mask_visualization(current_frame, segmentation_mask)
+                segmentation_vis = blend_rgb_and_mask_for_visualization(current_frame, segmentation_mask)
                 segmentation_vis = Image.fromarray(segmentation_vis)
                 segmentation_vis.save(os.path.join(mask_vis_path, f"{out_frame_idx}.jpg"), "JPEG")
             np.save(os.path.join(video_root, 'masks.npy'), video_segments)
@@ -95,7 +95,7 @@ def track_video_frames():
     segmentor = SamVideoSegmentor()
 
     camera_name = 'dave'
-    video_path = './raw_data/episode_0000/rgbs'
+    video_path = './example_data/episode_0000/rgbs'
     gripper_id, point_prompts, prompt_labels = GRIPPER_ID, POINT_PROMPTS[camera_name], POINT_PROMPT_LABELS[camera_name]
     frame_names = os.listdir(video_path)
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
@@ -104,7 +104,7 @@ def track_video_frames():
         current_frame = np.asarray(Image.open(os.path.join(video_path, f"{i}.jpg")))
         mask = segmentor.tracking(current_frame, gripper_id, point_prompts, prompt_labels)
         frame = blend_rgb_and_mask_for_visualization(current_frame, mask)
-        cv2.imshow('Frame', frame)
+        cv2.imshow('Frame', frame[:,:,::-1])
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
     cv2.destroyAllWindows()
