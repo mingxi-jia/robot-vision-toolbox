@@ -5,7 +5,7 @@ from datetime import datetime
 from PIL import Image
 import matplotlib.pyplot as plt
 
-from segmentors.configs import DEPTH_MINMAXS, INTRINSICS, EXTRINSICS
+from sam_segmentor.configs import DEPTH_MINMAXS, INTRINSICS, EXTRINSICS
 
 def project_rgb_and_mask_to_cloud(rgb, depth, mask, camera_name):
     intrinsic_matrix, extrinsic_matrix, depth_minmax = INTRINSICS[camera_name], EXTRINSICS[camera_name], DEPTH_MINMAXS[camera_name]

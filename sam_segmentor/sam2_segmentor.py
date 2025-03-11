@@ -8,8 +8,8 @@ import torch
 from sam2.build_sam import build_sam2_camera_predictor
 from sam2.sam2_video_predictor import SAM2VideoPredictor
 
-from segmentors.utils import show_points, show_mask, visualize_prompt, project_rgb_and_mask_to_cloud
-from segmentors.configs import GRIPPER_ID, POINT_PROMPTS, POINT_PROMPT_LABELS
+from sam_segmentor.utils import show_points, show_mask, visualize_prompt, project_rgb_and_mask_to_cloud
+from sam_segmentor.configs import GRIPPER_ID, POINT_PROMPTS, POINT_PROMPT_LABELS
 
 def blend_rgb_and_mask_for_visualization(current_frame, segmentation_mask):
     segmentation_vis = np.zeros_like(current_frame)
@@ -96,7 +96,7 @@ def track_video_frames():
     segmentor = SamVideoSegmentor()
 
     camera_name = 'dave'
-    video_path = './example_data/episode_0000/rgbs'
+    video_path = './sam_segmentor/example_data/episode_0000/rgbs'
     gripper_id, point_prompts, prompt_labels = GRIPPER_ID, POINT_PROMPTS[camera_name], POINT_PROMPT_LABELS[camera_name]
     frame_names = os.listdir(video_path)
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
@@ -114,8 +114,8 @@ def track_cloud_frames():
     segmentor = SamVideoSegmentor()
 
     camera_name = 'dave'
-    video_path = './example_data/episode_0000/rgbs'
-    depth_path = './example_data/episode_0000/depths'
+    video_path = './sam_segmentor/example_data/episode_0000/rgbs'
+    depth_path = './sam_segmentor/example_data/episode_0000/depths'
     gripper_id, point_prompts, prompt_labels = GRIPPER_ID, POINT_PROMPTS[camera_name], POINT_PROMPT_LABELS[camera_name]
     frame_names = os.listdir(video_path)
     frame_names.sort(key=lambda p: int(os.path.splitext(p)[0]))
