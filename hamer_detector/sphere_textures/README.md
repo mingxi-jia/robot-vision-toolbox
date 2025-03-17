@@ -1,0 +1,1 @@
+the texture files are from Generative Image as Action Models (https://arxiv.org/pdf/2407.07875?)
