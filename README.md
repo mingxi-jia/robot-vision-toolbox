@@ -17,9 +17,6 @@ export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/l
 
 # 2. hamer hand detector
 ```
-# install the cuda version torch (tested on cuda 12.2)
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-
 # install hamer
 git clone --recursive https://github.com/geopavlakos/hamer.git ./submodules/hamer
 cd ./submodules/hamer
@@ -29,12 +26,13 @@ bash fetch_demo_data.sh
 
 # change hamer camera parameter (VERY IMPORTANT)
 # in ./submodules/hamer/_DATA/hamer_ckpts/model_config.yaml
-FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
+[Line 59] FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
 
 # preprocess video
 python hamer_detector/video_preprocessor.py
 
 # hamer detection
+[NOTE(not affecting running): iopath imcompactable, detectron requireing iopath<0.1.10, not compatable with SAM2's installation requirement of iopath>0.1.10]
 python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense-test --out_folder hamer_detector/example_data/realsense-test-hamer --batch_size=48 --save_mesh"
 
 # render sphere based on hamer results
