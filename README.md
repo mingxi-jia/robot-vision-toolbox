@@ -1,7 +1,7 @@
 # 0. conda env
 ```
 conda create --name robotool python=3.10
-conda activate hamer
+conda activate robotool
 ```
 
 # 1. real-time video segmentor
