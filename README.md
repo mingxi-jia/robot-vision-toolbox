@@ -2,6 +2,10 @@
 ```
 conda create --name robotool python=3.10
 conda activate hamer
+
+git clone git@github.com:SaulBatman/robot-vision-toolbox.git
+cd robot-vision-toolbox
+export PYTHONPATH=/YOURPATH/robot-vision-toolbox:$PYTHONPATH
 ```
 
 # 1. real-time video segmentor
