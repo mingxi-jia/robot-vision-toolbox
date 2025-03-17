@@ -7,7 +7,6 @@ from PIL import Image
 from pyrender.constants import RenderFlags
 from typing import List
 import yaml
-
 class HandMarker:
     """
     JointMarker class to draw actions on images
@@ -141,7 +140,7 @@ class HandMarker:
 
             sphere_texture = pyrender.Texture(
                 source=Image.open(
-                    os.path.join("./data/sphere_textures/", sphere_texture_name)
+                    os.path.join("./hamer_detector/sphere_textures/", sphere_texture_name)
                 ).convert("RGBA"),
                 source_channels="RGBA",
             )
@@ -267,6 +266,7 @@ def main():
         # Save the result
         out_path = os.path.join(out_folder, i)
         blended.save(out_path)
+        # blended.show()
         print(f"Saved: {out_path}")
 
 if __name__ == "__main__":

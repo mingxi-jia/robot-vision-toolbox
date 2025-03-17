@@ -1,2 +1,14 @@
 raw_data
 *.pyc
+*.png
+submodules/segment-anything-2-real-time/
+submodules/hamer/
+hamer_detector/example_data/
+_DATA/vitpose_ckpts/vitpose+_huge/wholebody.pth
+_DATA/hamer_demo_data.tar.gz
+_DATA/hamer_ckpts/model_config.yaml
+_DATA/hamer_ckpts/dataset_config.yaml
+_DATA/hamer_ckpts/checkpoints/hamer.ckpt
+_DATA/data/mano_mean_params.npz
+_DATA/data/mano/MANO_RIGHT.pkl
+third-party/ViTPose
