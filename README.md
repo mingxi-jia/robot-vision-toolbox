@@ -23,7 +23,9 @@ cd ./submodules/hamer
 pip install -e .[all]
 pip install -v -e third-party/ViTPose
 bash fetch_demo_data.sh
-
+```
+Besides these files, you also need to download the MANO model. Please visit the MANO website and register to get access to the downloads section. We only require the right hand model. [MANO_RIGHT.pkl](https://mano.is.tue.mpg.de/) under the _DATA/data/mano folder.
+```
 # change hamer camera parameter (VERY IMPORTANT)
 # in ./submodules/hamer/_DATA/hamer_ckpts/model_config.yaml
 [Line 59] FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
