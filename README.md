@@ -33,7 +33,7 @@ python hamer_detector/video_preprocessor.py
 
 # hamer detection
 [NOTE(not affecting running): iopath imcompactable, detectron requireing iopath<0.1.10, not compatable with SAM2's installation requirement of iopath>0.1.10]
-python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense-test --out_folder hamer_detector/example_data/realsense-test-hamer --batch_size=48 --save_mesh"
+python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense-test --out_folder hamer_detector/example_data/realsense-test-hamer --batch_size=48 --save_mesh
 
 # render sphere based on hamer results
 python hamer_detector/sphere_renderer.py
