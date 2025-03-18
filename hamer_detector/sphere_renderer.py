@@ -139,9 +139,10 @@ class HandMarker:
                 }
                 sphere_texture_name = color_mapping[sphere_colors[i]]
 
+            current_path = os.path.dirname(os.path.realpath(__file__))
             sphere_texture = pyrender.Texture(
                 source=Image.open(
-                    os.path.join("./data/sphere_textures/", sphere_texture_name)
+                    os.path.join(current_path, "sphere_textures", sphere_texture_name)
                 ).convert("RGBA"),
                 source_channels="RGBA",
             )
