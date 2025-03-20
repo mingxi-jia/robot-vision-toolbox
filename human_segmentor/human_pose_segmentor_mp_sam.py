@@ -17,23 +17,48 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
-pose = mp_pose.Pose(static_image_mode=True, model_complexity=2, enable_segmentation=True, 
-                     min_detection_confidence=0.1, min_tracking_confidence=0.1)
+pose = mp_pose.Pose(static_image_mode=False, model_complexity=2, enable_segmentation=True, 
+                     min_detection_confidence=0.5, min_tracking_confidence=0.5)
 
 # Load SAM2 Model
 checkpoint = "submodules/segment-anything-2-real-time/checkpoints/sam2.1_hiera_large.pt"
 model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
 sam_predictor = SAM2ImagePredictor(build_sam2(model_cfg, checkpoint))
 
+def expand_mask(mask, kernel_size=5, iterations=1):
+    """
+    Expands the segmentation mask slightly using morphological dilation.
+    
+    Arguments:
+    - mask: Binary segmentation mask (np.uint8, values 0 or 1).
+    - kernel_size: Size of the dilation kernel (default=3).
+    - iterations: Number of times to apply dilation (default=1).
+
+    Returns:
+    - Expanded segmentation mask.
+    """
+    kernel = np.ones((kernel_size, kernel_size), np.uint8)
+    expanded_mask = cv2.dilate(mask, kernel, iterations=iterations)
+    
+    return expanded_mask
+
+
 def extract_segmentation_points(image_path, num_points=10):
     """
     Extracts human pose keypoints and segmentation mask from an image using MediaPipe.
-    Evenly samples points from the segmentation mask for SAM2 input.
+    Applies Gaussian blur to smooth the edges of the segmentation mask.
     """
-    image = cv2.imread(image_path)
+    if isinstance(image_path, str):
+        image = cv2.imread(image_path)
+    else:
+        image = image_path
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
 
+    if not results.pose_landmarks or results.segmentation_mask is None:
+        print(f"No valid segmentation found for {image_path}.")
+        return None, None, None, None
+    
     height, width, _ = image.shape
     segmentation_mask = (results.segmentation_mask > 0.5).astype(np.uint8)
 
@@ -41,7 +66,7 @@ def extract_segmentation_points(image_path, num_points=10):
     mask_indices = np.column_stack(np.where(segmentation_mask == 1))  # (row, col)
 
     if len(mask_indices) == 0:
-        print("No valid segmentation points found.")
+        print(f"No valid segmentation points found for {image_path}.")
         return None, None, None, None
 
     # Sort points to ensure even spacing
@@ -66,7 +91,7 @@ def extract_segmentation_points(image_path, num_points=10):
 
 def segment_human(image, sampled_points):
     """
-    Uses SAM2 to refine segmentation using sampled points from MediaPipe's segmentation mask.
+    Uses SAM2 to refine segmentation using evenly sampled points from MediaPipe's segmentation mask.
     """
     # Convert OpenCV BGR to RGB for SAM2
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -81,7 +106,18 @@ def segment_human(image, sampled_points):
         multimask_output=False
     )
 
-    return masks[0]  # Return the best mask
+    segmentation_mask = masks[0]
+        # 🔥 Apply Morphological OPENING to Remove Small Noise
+    segmentation_mask = cv2.morphologyEx(segmentation_mask, cv2.MORPH_OPEN, np.ones((3,3), np.uint8))
+
+    # 🔥 Apply Morphological CLOSING to Fill Small Holes
+    segmentation_mask = cv2.morphologyEx(segmentation_mask, cv2.MORPH_CLOSE, np.ones((3,3), np.uint8))
+
+    # 🔥 Expand the Mask Slightly (New Fix)
+    segmentation_mask = expand_mask(segmentation_mask, kernel_size=7, iterations=1)
+
+
+    return segmentation_mask  # Return the best mask
 
 def replace_background(image, mask, reference_image):
     """
@@ -100,21 +136,22 @@ def replace_background(image, mask, reference_image):
 
     # Create the final composited image
     result_image = image.copy()
-    result_image[mask == 0] = reference_resized[mask == 0]  # Replace background pixels
+    result_image[mask == 1] = reference_resized[mask == 1]  # Replace background pixels
 
     return result_image
 
-def process_image(image_path, output_mask_path):
+def process_image(image_path, output_mask_path, reference_path=None, output_final_path=None):
     """
-    Full pipeline: Extracts segmentation points, displays skeleton, refines segmentation with SAM2, and saves mask.
+    Full pipeline: Extracts segmentation points, displays skeleton, refines segmentation with SAM2,
+    and optionally replaces the background using a reference image.
     """
     image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(image_path)
     if sampled_points is None:
         return
 
     # Save and display skeleton image
-    skeleton_image_path = "annotated_skeleton.png"
-    cv2.imwrite(skeleton_image_path, annotated_image)
+    skeleton_image_path = os.path.join(os.path.dirname(output_mask_path), "annotated_skeleton.png")
+    # cv2.imwrite(skeleton_image_path, annotated_image)
 
     # Segment using SAM2
     refined_mask = segment_human(image, sampled_points)
@@ -123,26 +160,131 @@ def process_image(image_path, output_mask_path):
     mask_image = Image.fromarray((refined_mask * 255).astype(np.uint8))
     mask_image.save(output_mask_path)
 
-    # Overlay segmentation on image for visualization
-    segmented_image = image.copy()
-    segmented_image[refined_mask > 0] = [255, 0, 0]  # Highlight mask in red
+    final_result = None
+    if reference_path and output_final_path:
+        # Load reference background image
+        reference_image = cv2.imread(reference_path)
+
+        # Replace background
+        final_result = replace_background(image, refined_mask, reference_image)
+
+        # Save final composited image
+        cv2.imwrite(output_final_path, final_result)
 
     # Display results
-    plt.figure(figsize=(15, 5))
-    
-    plt.subplot(1, 3, 1)
+    plt.figure(figsize=(20, 5))
+
+    plt.subplot(1, 4, 1)
     plt.imshow(cv2.cvtColor(annotated_image, cv2.COLOR_BGR2RGB))
     plt.title("Extracted Skeleton")
 
-    plt.subplot(1, 3, 2)
+    plt.subplot(1, 4, 2)
     plt.imshow(mediapipe_mask, cmap="gray")
     plt.title("MediaPipe Segmentation Mask")
 
-    plt.subplot(1, 3, 3)
-    plt.imshow(segmented_image)
+    plt.subplot(1, 4, 3)
+    plt.imshow(refined_mask, cmap="gray")
     plt.title("SAM2 Refined Mask")
 
-    plt.show()
+    if final_result is not None:
+        plt.subplot(1, 4, 4)
+        plt.imshow(cv2.cvtColor(final_result, cv2.COLOR_BGR2RGB))
+        plt.title("Final Image with New Background")
 
-# Example Usage
-process_image("hamer_detector/example_data/realsense-test/frame_000000.png", "output_mask.png")
+    # plt.show()
+
+def process_folder(input_folder, output_folder, reference_path=None):
+    """
+    Processes all images in a folder.
+    
+    Arguments:
+    - input_folder: Folder containing images to process.
+    - output_folder: Folder to save results.
+    - reference_path: Optional reference background image for replacement.
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    image_files = [f for f in os.listdir(input_folder) if f.endswith((".png", ".jpg", ".jpeg"))]
+    
+    for image_file in image_files:
+        image_path = os.path.join(input_folder, image_file)
+        mask_output_path = os.path.join(output_folder, f"{os.path.splitext(image_file)[0]}_mask.png")
+        final_output_path = os.path.join(output_folder, f"{os.path.splitext(image_file)[0]}_final.png")
+
+        print(f"Processing {image_path}...")
+        process_image(image_path, mask_output_path, reference_path, final_output_path if reference_path else None)
+
+
+def process_video(video_path, output_folder):
+    """
+    Processes a video frame by frame, applying segmentation and replacing background with first frame.
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    cap = cv2.VideoCapture(video_path)
+    frame_count = 0
+    fps = int(cap.get(cv2.CAP_PROP_FPS))  # Get video FPS
+
+    reference_image = None  # Placeholder for reference background
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Save first frame as reference background
+        if frame_count == 0:
+            reference_image = frame.copy()
+
+        frame_filename = f"frame_{frame_count:06d}.png"
+        # mask_output_path = os.path.join(output_folder, f"frame_{frame_count:06d}_mask.png")
+        final_output_path = os.path.join(output_folder, f"frame_{frame_count:06d}_final.png")
+
+        image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(frame)
+
+        if sampled_points is not None:
+            refined_mask = segment_human(image, sampled_points)
+
+            # Save segmentation mask
+            mask_image = Image.fromarray((refined_mask * 255).astype(np.uint8))
+            # mask_image.save(mask_output_path)
+
+            final_result = None
+            if reference_image is not None:
+                final_result = replace_background(image, refined_mask, reference_image)
+                cv2.imwrite(final_output_path, final_result)
+
+        frame_count += 1
+
+    cap.release()
+    print(f"✅ Processed {frame_count} frames. Now compiling into video...")
+
+    # Compile frames into a video using ffmpeg
+    os.system(f"ffmpeg -framerate {fps} -i {output_folder}frame_%06d_final.png -c:v libx264 -pix_fmt yuv420p {output_folder}output_video.mp4")
+
+    print("✅ Video processing complete! Output saved to:", output_folder)
+
+
+def main():
+    """
+    Main function to process images from a folder.
+    """
+    # input_folder = "hamer_detector/example_data/realsense-test/"
+    # output_folder = "hamer_detector/example_data/realsense-test-pose-seg/"
+    # reference_image = "hamer_detector/example_data/realsense-test/frame_000180.png" # Set to None if no background replacement is needed
+    ####################3 
+    # input_folder = "hamer_detector/example_data/test-env/"
+    # output_folder = "hamer_detector/example_data/test-env-pose-seg/"
+    # reference_image = "hamer_detector/example_data/test-env/frame_000000.png" # Set to None if no background replacement is needed
+
+    # process_folder(input_folder, output_folder, reference_image)
+
+
+
+    video_path = "/home/xhe71/Downloads/human.mp4"  # Change this to your input video
+    output_folder = "hamer_detector/example_data/test-env-pose-seg/"
+
+    process_video(video_path, output_folder)
+
+if __name__ == "__main__":
+    main()
