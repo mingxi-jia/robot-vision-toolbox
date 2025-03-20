@@ -56,9 +56,17 @@ def extract_segmentation_points(image_path, num_points=10):
     results = pose.process(image_rgb)
 
     if not results.pose_landmarks or results.segmentation_mask is None:
-        print(f"No valid segmentation found for {image_path}.")
+        # print(f"No valid segmentation found for {image_path}.")
         return None, None, None, None
+    # drop frame if left or right wrist visibility is lower than a threshold:
+    thre = 0.3
+    left_wrist_visibility =  results.pose_landmarks.landmark[18].visibility
+    right_wrist_visibility =  results.pose_landmarks.landmark[15].visibility
     
+    if right_wrist_visibility< thre and left_wrist_visibility < thre:
+        print("Did not detect wrist:", left_wrist_visibility, right_wrist_visibility)
+        return None, None, None, None
+    # print(results.pose_landmarks.landmark[15].visibility)
     height, width, _ = image.shape
     segmentation_mask = (results.segmentation_mask > 0.5).astype(np.uint8)
 
@@ -137,6 +145,11 @@ def replace_background(image, mask, reference_image):
     # Create the final composited image
     result_image = image.copy()
     result_image[mask == 1] = reference_resized[mask == 1]  # Replace background pixels
+
+    # Replace the top 1/3 of the image with the reference background
+    height = image.shape[0]
+    top_section = height // 3  # Calculate the height for top 1/3
+    result_image[:top_section, :] = reference_resized[:top_section, :]  # Replace top section
 
     return result_image
 
@@ -281,8 +294,8 @@ def main():
 
 
 
-    video_path = "/home/xhe71/Downloads/human.mp4"  # Change this to your input video
-    output_folder = "hamer_detector/example_data/test-env-pose-seg/"
+    video_path = "/home/xhe71/Downloads/human (1).mp4"  # Change this to your input video
+    output_folder = "hamer_detector/example_data/test-env-pose-seg-2/"
 
     process_video(video_path, output_folder)
 

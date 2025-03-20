@@ -40,6 +40,23 @@ python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense
 # render sphere based on hamer results
 python hamer_detector/sphere_renderer.py
 ```
+
+# 3. Human Segmentation
+```
+pip install mediapipe
+```
+run segmentation to remove human from the scene. 
+```
+python human_segmentor/human_pose_segmentor_mp_sam.py
+```
+To turn image folder into videos, open terminal and run:
+```
+ls *_final.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
+
+
+ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4
+```
+
 # TODOs
 - [x] sam segmentor
 - [x] single-view video segmentation

@@ -21,7 +21,7 @@ from typing import Dict, Optional
 def main():
     parser = argparse.ArgumentParser(description='HaMeR demo code')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
-    parser.add_argument('--img_folder', type=str, default='hamer_detector/example_data/realsense-test/', help='Folder with input images')
+    parser.add_argument('--img_folder', type=str, default='hamer_detector/example_data/test-env/', help='Folder with input images')
     parser.add_argument('--out_folder', type=str, default='hamer_detector/example_data/realsense-test-hamer/', help='Output folder to save rendered results')
     parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
     parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
