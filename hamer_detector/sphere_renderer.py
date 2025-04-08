@@ -7,6 +7,7 @@ from PIL import Image
 from pyrender.constants import RenderFlags
 from typing import List
 import yaml
+
 class HandMarker:
     """
     JointMarker class to draw actions on images
@@ -132,7 +133,7 @@ class HandMarker:
                 )
             else:
                 color_mapping = {
-                    "green": "sphere_green_stripe_texture.png",
+                    "green": "bigger_distinguishable_checkerboard_texture.png",
                     "red": "sphere_red_stripe_texture.png",
                     "purple": "sphere_purple_stripe_texture.png",
                 }
@@ -179,15 +180,11 @@ class HandMarker:
         rendered_img, _ = self._offscreen_renderer.render(scene, flags)
         return rendered_img
 
-def main():
+def main(image_folder, position_file, out_folder):
     # Example setup:
     # Folder containing 20 images: "images/"
     # A file containing 20 (x,y,z) positions: "positions.npy" (shape: (20,3))
     # Modify these paths as needed.
-    image_folder = "hamer_detector/example_data/realsense-test"
-    position_file = "hamer_detector/example_data/realsense-test-hamer/centroids.yml"
-    out_folder = "hamer_detector/example_data/realsense-test-spheres"
-
     os.makedirs(out_folder, exist_ok=True)
 
     # Load your 20 positions (shape: (20,3))
@@ -232,6 +229,10 @@ def main():
 
         # Build a 4x4 transform for the sphere at positions_xyz[i]
         image_fn = i.split(".")[0]
+        if "final" in image_fn:
+            image_fn = image_fn[:-6]
+        if image_fn not in positions_xyz:
+            continue
         x, y, z = positions_xyz[image_fn]
         T = np.eye(4, dtype=np.float32)
         T[0, 3] = x
@@ -270,4 +271,15 @@ def main():
         print(f"Saved: {out_path}")
 
 if __name__ == "__main__":
-    main()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Render spheres using HaMeR 3D centroids and overlay them onto images.")
+    parser.add_argument("--image_folder", type=str, default="hamer_detector/example_data/test-env-pose-seg-2",
+                        help="Folder containing background images.")
+    parser.add_argument("--position_file", type=str, default="hamer_detector/example_data/realsense-test-hamer/centroids.yml",
+                        help="YAML file containing 3D positions for rendering.")
+    parser.add_argument("--out_folder", type=str, default="hamer_detector/example_data/realsense-test-spheres",
+                        help="Folder to save blended sphere-overlaid images.")
+    args = parser.parse_args()
+
+    main(args.image_folder, args.position_file, args.out_folder)

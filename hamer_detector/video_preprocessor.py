@@ -50,4 +50,4 @@ if __name__ == "__main__":
     # Example usage:
     # Load 'test.MOV', skip every 10 frames, resize them to 640x360, and save to './data'
     # subsample_video("hamer_detector/example_data/realsense_test.mkv", skip_every_frame=10, output_dir="./hamer_detector/example_data/realsense-test", new_size=(640, 480))
-    subsample_video("/home/xhe71/Downloads/human (1).mp4", skip_every_frame=5, output_dir="./hamer_detector/example_data/test-env", new_size=(640, 480))
+    subsample_video("/home/xhe71/Downloads/human (1).mp4", skip_every_frame=1, output_dir="./hamer_detector/example_data/test-env", new_size=(640, 480))

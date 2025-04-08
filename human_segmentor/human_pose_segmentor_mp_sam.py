@@ -17,8 +17,10 @@ from sam2.sam2_image_predictor import SAM2ImagePredictor
 mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
-pose = mp_pose.Pose(static_image_mode=False, model_complexity=2, enable_segmentation=True, 
-                     min_detection_confidence=0.3, min_tracking_confidence=0.3)
+pose_video = mp_pose.Pose(static_image_mode=False, model_complexity=2, enable_segmentation=True,
+                           min_detection_confidence=0.3, min_tracking_confidence=0.3)
+pose_static = mp_pose.Pose(static_image_mode=True, model_complexity=2, enable_segmentation=True,
+                            min_detection_confidence=0.3, min_tracking_confidence=0.3)
 
 # Load SAM2 Model
 checkpoint = "submodules/segment-anything-2-real-time/checkpoints/sam2.1_hiera_large.pt"
@@ -134,12 +136,9 @@ def visualize_segmentation_debug(original, skeleton=None, mediapipe_mask=None, r
         plt.title(title)
         plt.axis("off")
 
+    plt.tight_layout()
     if save_path:
-        plt.savefig(save_path)
-    else:
-        plt.tight_layout()
-        plt.show()
-
+        plt.savefig(save_path + title_suffix + ".png", dpi=150)
     plt.close()
 
 
@@ -207,10 +206,11 @@ def extract_segmentation_points(image_path, num_points=10):
     else:
         image = image_path
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = pose.process(image_rgb)
-
+    results = pose_video.process(image_rgb)
     if not results.pose_landmarks or results.segmentation_mask is None:
-        return None, None, None, None
+        results = pose_static.process(image_rgb)  # fallback to static mode for higher confidence
+        if not results.pose_landmarks or results.segmentation_mask is None:
+            return None, None, None, None
 
     height, width, _ = image.shape
 
@@ -233,14 +233,45 @@ def extract_segmentation_points(image_path, num_points=10):
     # plt.axis("off")
     # plt.show()
 
-    # ✋ Use pose landmarks as segmentation points
+    # ✋ Use pose landmarks as segmentation points from upper body landmarks
+    upper_body_indices = [0, 11, 12, 13, 14, 15, 16, 23, 24]  # nose, shoulders, elbows, wrists, clavicle
     landmarks = results.pose_landmarks.landmark
     sampled_points = []
-    for lm in landmarks:
-        if lm.visibility > 0.5:  # Only include visible keypoints
+    for idx in upper_body_indices:
+        lm = landmarks[idx]
+        if lm.visibility > 0.5:
             x = int(lm.x * width)
             y = int(lm.y * height)
             sampled_points.append([x, y])
+    # Add evenly spaced vertical points down the torso between shoulders and mid-torso
+    if 11 in upper_body_indices and 12 in upper_body_indices and 23 in upper_body_indices and 24 in upper_body_indices:
+        left_shoulder = landmarks[11]
+        right_shoulder = landmarks[12]
+        left_hip = landmarks[23]
+        right_hip = landmarks[24]
+
+        center_shoulder = ((left_shoulder.x + right_shoulder.x) / 2, (left_shoulder.y + right_shoulder.y) / 2)
+        center_hip = ((left_hip.x + right_hip.x) / 2, (left_hip.y + right_hip.y) / 2)
+
+        for t in np.linspace(0.2, 0.8, num=4):
+            x = int((1 - t) * center_shoulder[0] * width + t * center_hip[0] * width)
+            y = int((1 - t) * center_shoulder[1] * height + t * center_hip[1] * height)
+            sampled_points.append([x, y])
+    # Sample points along left and right arms (shoulder to wrist)
+    def sample_line(lm_start, lm_end, steps=3):
+        return [
+            [int((1 - t) * lm_start.x * width + t * lm_end.x * width),
+             int((1 - t) * lm_start.y * height + t * lm_end.y * height)]
+            for t in np.linspace(0.2, 0.8, steps)
+            if lm_start.visibility > 0.5 and lm_end.visibility > 0.5
+        ]
+
+    left_arm_points = sample_line(landmarks[11], landmarks[15])  # left shoulder to left wrist
+    right_arm_points = sample_line(landmarks[12], landmarks[16])  # right shoulder to right wrist
+
+    sampled_points.extend(left_arm_points)
+    sampled_points.extend(right_arm_points)
+
     sampled_points = np.array(sampled_points)
 
 
@@ -399,7 +430,7 @@ def process_video(video_path, output_folder, background_path=None):
             valid_region_mask = np.zeros_like(mediapipe_mask, dtype=np.uint8)
             valid_region_mask[int(height * (1 / 3)):, :] = 1
         else:
-            valid_region_mask = np.ones((height, frame.shape[1]), dtype=np.uint8)  # fallback: full image valid
+            valid_region_mask = np.ones((height, width), dtype=np.uint8)
 
         if sampled_points is not None:
             # Step 1: Run SAM2
@@ -460,7 +491,8 @@ def process_video(video_path, output_folder, background_path=None):
                 fallback_mask=refined_mask,
                 final=final_result,
                 flow=landmark_flow,
-                title_suffix=f"(Frame {frame_count})"
+                title_suffix=f"(Frame {frame_count})",
+                save_path = "hamer_detector/example_data/test-env-pose-seg-2-tmp/"
             )
 
             cv2.imwrite(final_output_path, final_result)
@@ -481,7 +513,8 @@ def process_video(video_path, output_folder, background_path=None):
                         fallback_mask=refined_mask,
                         final=final_result,
                         flow=(good_prev, good_next),
-                        title_suffix=f"(Frame {frame_count} - SAM2 via Flow Landmarks)"
+                        title_suffix=f"(Frame {frame_count} - SAM2 via Flow Landmarks)",
+                        save_path = "hamer_detector/example_data/test-env-pose-seg-2-tmp/"
                     )
 
                     cv2.imwrite(final_output_path, final_result)
@@ -520,4 +553,15 @@ def main():
     
 if __name__ == "__main__":
     main()
+    import os
+    import argparse
+    cwd = os.getcwd()
+
+    parser = argparse.ArgumentParser(description="Human segmentation and background replacement using MediaPipe + SAM2")
+    parser.add_argument("--video_path", type=str, default= "/home/xhe71/Downloads/human (1).mp4",
+                        help="Path to input video file")
+    parser.add_argument("--output_folder", type=str, default= "hamer_detector/example_data/test-env-pose-seg-2/",
+                        help="Directory to save processed frames and output video")
+    parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png",
+                        help="Path to background image for replacement")
 
