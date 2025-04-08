@@ -267,7 +267,7 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
         background = pil_img.convert("RGBA")
         foreground = rendered_pil.convert("RGBA")
         # Use alpha=0.7, for example
-        blended = Image.blend(background, foreground, alpha=0.7)
+        blended = Image.blend(background, foreground, alpha=0.9)
 
         # Save the result
         out_path = os.path.join(out_folder, i)

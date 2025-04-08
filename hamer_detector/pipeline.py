@@ -38,7 +38,7 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     hamer_main(hamer_args)
 
     print("🔹 Step 3: Segmenting and removing human from video...")
-    process_video(video_path=video_path, output_folder=segmentation_out_dir, background_path=background_img)
+    process_video(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img)
 
     print("🔹 Step 4: Rendering spheres and blending with background...")
     sphere_render_main(segmentation_out_dir, os.path.join(hamer_out_dir, "centroids.yml"), sphere_out_dir, handedness)

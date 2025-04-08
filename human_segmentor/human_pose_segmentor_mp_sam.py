@@ -540,6 +540,139 @@ def process_video(video_path, output_folder, background_path=None):
 
     print("✅ Video processing complete! Output saved to:", output_folder)
 
+def process_image_folder(image_folder, output_folder, background_path=None):
+    """
+    Processes a folder of images using MediaPipe + SAM2 segmentation,
+    falls back to MediaPipe or optical flow when needed,
+    and optionally replaces background using a reference image.
+    """
+    os.makedirs(output_folder, exist_ok=True)
+
+    image_paths = sorted([
+        os.path.join(image_folder, f)
+        for f in os.listdir(image_folder)
+        if f.endswith(('.jpg', '.png'))
+    ])
+
+    if background_path is not None:
+        reference_image = cv2.imread(background_path)
+        if reference_image is None:
+            raise ValueError(f"❌ Could not read background image at {background_path}")
+    else:
+        reference_image = None
+
+    prev_frame = None
+    prev_mask = None
+    prev_landmarks = None
+
+    for idx, image_path in enumerate(image_paths):
+        frame = cv2.imread(image_path)
+        frame_count = idx  # Use index for naming
+
+        final_output_path = os.path.join(output_folder, f"frame_{frame_count:06d}_final.png")
+        landmark_flow = None
+
+        image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(frame)
+        height, width = frame.shape[:2]
+
+        if mediapipe_mask is not None:
+            valid_region_mask = np.zeros_like(mediapipe_mask, dtype=np.uint8)
+            valid_region_mask[int(height * (1 / 3)):, :] = 1
+        else:
+            valid_region_mask = np.ones((height, width), dtype=np.uint8)
+
+        if sampled_points is not None:
+            segmentation_mask = segment_human(image, sampled_points)
+            refined_mask = segmentation_mask.copy()
+
+            masked_mp = np.logical_and(mediapipe_mask, valid_region_mask)
+            masked_sam = np.logical_and(segmentation_mask, valid_region_mask)
+
+            mp_area = np.sum(masked_mp)
+            sam_area = np.sum(masked_sam)
+
+            min_mask_area = 500
+            use_mp_mask = False
+
+            if mp_area < min_mask_area:
+                print(f"⚠️ Frame {frame_count}: MediaPipe mask too small (area={mp_area}) — skipping.")
+                continue
+            else:
+                intersection = np.logical_and(masked_sam, masked_mp).sum()
+                union = np.logical_or(masked_sam, masked_mp).sum()
+                iou = intersection / union if union > 0 else 0
+                print(f"ℹ️ Frame {frame_count}: IoU = {iou:.2f}")
+
+                if iou < 0.1:
+                    print(f"⚠️ Frame {frame_count}: Low IoU — using MediaPipe mask instead.")
+                    refined_mask = mediapipe_mask.copy()
+                    use_mp_mask = True
+
+            if np.sum(np.logical_and(refined_mask, valid_region_mask)) < min_mask_area and not use_mp_mask:
+                print(f"❌ Frame {frame_count}: Both SAM2 and MP failed — using optical flow fallback.")
+                if prev_frame is not None and prev_mask is not None:
+                    refined_mask, _ = warp_mask_with_optical_flow(prev_frame, frame, prev_mask)
+
+            final_result = replace_background(image, refined_mask, reference_image) if reference_image is not None else frame.copy()
+
+            if prev_frame is not None and prev_landmarks is not None:
+                good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
+                if len(good_prev) > 0:
+                    landmark_flow = (good_prev, good_next)
+
+            prev_frame = frame.copy()
+            prev_mask = refined_mask.copy()
+            prev_landmarks = sampled_points.copy()
+
+            visualize_segmentation_debug(
+                original=frame,
+                skeleton=annotated_image,
+                mediapipe_mask=masked_mp,
+                refined_mask=masked_sam,
+                fallback_mask=refined_mask,
+                final=final_result,
+                flow=landmark_flow,
+                title_suffix=f"(Frame {frame_count})",
+                save_path=os.path.join(output_folder, "debug")
+            )
+
+            cv2.imwrite(final_output_path, final_result)
+
+        else:
+            print(f"⚠️ Frame {frame_count}: No pose detected — using optical flow points as input to SAM2.")
+            if prev_frame is not None and prev_landmarks is not None:
+                good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
+                if len(good_next) >= 4:
+                    print(f"ℹ️ Using {len(good_next)} tracked landmarks for SAM2.")
+                    segmentation_mask = segment_human(frame, good_next.astype(int))
+                    refined_mask = segmentation_mask.copy()
+
+                    final_result = replace_background(frame, refined_mask, reference_image) if reference_image is not None else frame.copy()
+
+                    visualize_segmentation_debug(
+                        original=frame,
+                        fallback_mask=refined_mask,
+                        final=final_result,
+                        flow=(good_prev, good_next),
+                        title_suffix=f"(Frame {frame_count} - SAM2 via Flow Landmarks)",
+                        save_path=os.path.join(output_folder, "debug")
+                    )
+
+                    cv2.imwrite(final_output_path, final_result)
+
+                    prev_frame = frame.copy()
+                    prev_mask = refined_mask.copy()
+                    prev_landmarks = good_next.copy()
+                else:
+                    print(f"❌ Frame {frame_count}: Not enough flow-tracked landmarks — skipping.")
+                    continue
+            else:
+                print(f"❌ Skipping frame {frame_count} — no previous pose/landmarks.")
+                continue
+
+    print("✅ Image folder processing complete.")
+
+
 def main():
     """
     Main function to process images from a folder.
@@ -551,17 +684,27 @@ def main():
 
     process_video(video_path, output_folder, background_path)
     
+# if __name__ == "__main__":
+#     main()
+#     import os
+#     import argparse
+#     cwd = os.getcwd()
+
+#     parser = argparse.ArgumentParser(description="Human segmentation and background replacement using MediaPipe + SAM2")
+#     parser.add_argument("--video_path", type=str, default= "/home/xhe71/Downloads/human (1).mp4",
+#                         help="Path to input video file")
+#     parser.add_argument("--output_folder", type=str, default= "hamer_detector/example_data/test-env-pose-seg-2/",
+#                         help="Directory to save processed frames and output video")
+#     parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png",
+#                         help="Path to background image for replacement")
+
+
 if __name__ == "__main__":
-    main()
-    import os
     import argparse
-    cwd = os.getcwd()
+    parser = argparse.ArgumentParser(description="Segment folder of images using MediaPipe + SAM2")
+    parser.add_argument("--image_folder", type=str,default= "/home/xhe71/Desktop/robotool_test/tmp_imgs", help="Path to input image folder")
+    parser.add_argument("--output_folder", type=str,default= "hamer_detector/example_data/test-env-pose-seg-2/", help="Path to save processed images and debug outputs")
+    parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png", help="Background image for replacement")
+    args = parser.parse_args()
 
-    parser = argparse.ArgumentParser(description="Human segmentation and background replacement using MediaPipe + SAM2")
-    parser.add_argument("--video_path", type=str, default= "/home/xhe71/Downloads/human (1).mp4",
-                        help="Path to input video file")
-    parser.add_argument("--output_folder", type=str, default= "hamer_detector/example_data/test-env-pose-seg-2/",
-                        help="Directory to save processed frames and output video")
-    parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png",
-                        help="Path to background image for replacement")
-
+    process_image_folder(args.image_folder, args.output_folder, args.background_path)
