@@ -56,7 +56,7 @@ if __name__ == "__main__":
     parser.add_argument("--segmentation_out_dir", type=str, default="hamer_detector/segmentation_output", help="Folder to store segmentation results")
     parser.add_argument("--hamer_out_dir", type=str, default="hamer_detector/hamer_output", help="Folder to store HaMeR outputs")
     parser.add_argument("--sphere_out_dir", type=str, default="hamer_detector/final_output", help="Folder to store blended sphere output")
-    parser.add_argument("--background_img", type=str, default = "hamer_detector/example_data/frame_000340_final.png", help="Path to background image to use for replacement")
+    parser.add_argument("--background_img", type=str, default = "human_segmentor/first_frame.png", help="Path to background image to use for replacement")
     parser.add_argument("--handedness", type=str, default="right",
                     help="Select sphere overlay on designated hand: left or right(defualt)")
     args = parser.parse_args()
