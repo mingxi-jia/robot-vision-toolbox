@@ -47,7 +47,18 @@ def subsample_video(video_path, skip_every_frame=10, output_dir="./data", new_si
     print(f"Extraction complete. Saved {saved_count} frames to {output_dir}.")
 
 if __name__ == "__main__":
-    # Example usage:
-    # Load 'test.MOV', skip every 10 frames, resize them to 640x360, and save to './data'
-    # subsample_video("hamer_detector/example_data/realsense_test.mkv", skip_every_frame=10, output_dir="./hamer_detector/example_data/realsense-test", new_size=(640, 480))
-    subsample_video("/home/xhe71/Downloads/human (1).mp4", skip_every_frame=1, output_dir="./hamer_detector/example_data/test-env", new_size=(640, 480))
+    import argparse
+    parser = argparse.ArgumentParser(description="Subsample frames from a video")
+    parser.add_argument("--video_path", type=str, default="/home/xhe71/Downloads/human (1).mp4", help="Path to input video file")
+    parser.add_argument("--skip_every_frame", type=int, default=1, help="Number of frames to skip between each capture")
+    parser.add_argument("--output_dir", type=str, default="./hamer_detector/example_data/test-env", help="Directory to save extracted frames")
+    parser.add_argument("--resize_width", type=int, default=640, help="Width to resize frames to")
+    parser.add_argument("--resize_height", type=int, default=480, help="Height to resize frames to")
+    args = parser.parse_args()
+
+    subsample_video(
+        args.video_path,
+        skip_every_frame=args.skip_every_frame,
+        output_dir=args.output_dir,
+        new_size=(args.resize_width, args.resize_height)
+    )

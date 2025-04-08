@@ -180,7 +180,7 @@ class HandMarker:
         rendered_img, _ = self._offscreen_renderer.render(scene, flags)
         return rendered_img
 
-def main(image_folder, position_file, out_folder):
+def main(image_folder, position_file, out_folder, handedness = 'right'):
     # Example setup:
     # Folder containing 20 images: "images/"
     # A file containing 20 (x,y,z) positions: "positions.npy" (shape: (20,3))
@@ -231,6 +231,11 @@ def main(image_folder, position_file, out_folder):
         image_fn = i.split(".")[0]
         if "final" in image_fn:
             image_fn = image_fn[:-6]
+        if handedness.lower() == 'right':
+            image_fn = image_fn +'_right'
+        else:
+            image_fn = image_fn +'_left'
+
         if image_fn not in positions_xyz:
             continue
         x, y, z = positions_xyz[image_fn]
@@ -280,6 +285,8 @@ if __name__ == "__main__":
                         help="YAML file containing 3D positions for rendering.")
     parser.add_argument("--out_folder", type=str, default="hamer_detector/example_data/realsense-test-spheres",
                         help="Folder to save blended sphere-overlaid images.")
+    parser.add_argument("--handedness", type=str, default="right",
+                        help="Select sphere overlay on designated hand: left or right(defualt)")
     args = parser.parse_args()
 
-    main(args.image_folder, args.position_file, args.out_folder)
+    main(args.image_folder, args.position_file, args.out_folder, args.handedness)

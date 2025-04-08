@@ -57,6 +57,19 @@ ls *_final.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
 ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4
 ```
 
+# 4. Rendering with DiscoBall
+```
+python hamer_detector/pipeline.py --video_path YOUR_VIDEO_PATH --handedness "right"
+```
+
+# 5. side note: convert a folder of images into a video
+```
+ls processed_results/*.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
+
+
+ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4
+
+```
 # TODOs
 - [x] sam segmentor
 - [x] single-view video segmentation

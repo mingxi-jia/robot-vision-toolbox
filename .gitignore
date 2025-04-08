@@ -1,6 +1,8 @@
 raw_data
 *.pyc
 *.png
+*.jpg
+*.obj
 submodules/segment-anything-2-real-time/
 submodules/hamer/
 hamer_detector/example_data/

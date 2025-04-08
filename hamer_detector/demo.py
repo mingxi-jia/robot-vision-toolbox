@@ -18,21 +18,7 @@ from vitpose_model import ViTPoseModel
 import json
 from typing import Dict, Optional
 
-def main():
-    parser = argparse.ArgumentParser(description='HaMeR demo code')
-    parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
-    parser.add_argument('--img_folder', type=str, default='hamer_detector/example_data/test-env/', help='Folder with input images')
-    parser.add_argument('--out_folder', type=str, default='hamer_detector/example_data/realsense-test-hamer/', help='Output folder to save rendered results')
-    parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
-    parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
-    parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=True, help='If set, save meshes to disk also')
-    parser.add_argument('--batch_size', type=int, default=48, help='Batch size for inference/fitting')
-    parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
-    parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
-    parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
-
-    args = parser.parse_args()
-
+def main(args):
     # Download and load checkpoints
     download_models(CACHE_DIR_HAMER)
     model, model_cfg = load_hamer(args.checkpoint)
@@ -102,21 +88,25 @@ def main():
             left_hand_keyp = vitposes['keypoints'][-42:-21]
             right_hand_keyp = vitposes['keypoints'][-21:]
 
-            # Rejecting not confident detections
-            keyp = left_hand_keyp
-            valid = keyp[:,2] > 0.5
-            if sum(valid) > 3:
-                bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
+            # Save left wrist if valid
+            valid_left = left_hand_keyp[:, 2] > 0.5
+            if sum(valid_left) > 3:
+                bbox = [left_hand_keyp[valid_left, 0].min(), left_hand_keyp[valid_left, 1].min(),
+                        left_hand_keyp[valid_left, 0].max(), left_hand_keyp[valid_left, 1].max()]
                 bboxes.append(bbox)
                 is_right.append(0)
-            keyp = right_hand_keyp
-            valid = keyp[:,2] > 0.5
-            if sum(valid) > 3:
-                bbox = [keyp[valid,0].min(), keyp[valid,1].min(), keyp[valid,0].max(), keyp[valid,1].max()]
+
+            # Save right wrist if valid
+            valid_right = right_hand_keyp[:, 2] > 0.5
+            if sum(valid_right) > 3:
+                bbox = [right_hand_keyp[valid_right, 0].min(), right_hand_keyp[valid_right, 1].min(),
+                        right_hand_keyp[valid_right, 0].max(), right_hand_keyp[valid_right, 1].max()]
                 bboxes.append(bbox)
                 is_right.append(1)
 
+
         if len(bboxes) == 0:
+            print(f"Skipping {img_path.name} — no hand detected.")
             continue
 
         boxes = np.stack(bboxes)
@@ -175,7 +165,11 @@ def main():
                 else:
                     final_img = np.concatenate([input_patch, regression_img], axis=1)
 
-                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
+                # cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
+                hand_side = "right" if batch['right'][n].item() == 1 else "left"
+
+                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{hand_side}.png'), 255*final_img[:, :, ::-1])
+
 
                 # Add all verts and cams to list
                 verts = out['pred_vertices'][n].detach().cpu().numpy()
@@ -190,10 +184,12 @@ def main():
                 if args.save_mesh:
                     camera_translation = cam_t.copy()
                     tmesh = renderer.vertices_to_trimesh(verts, camera_translation, LIGHT_BLUE, is_right=is_right)
-                    tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{person_id}.obj'))
+                    tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{hand_side}.obj'))
                     
                     centroids = np.array(tmesh.vertices).mean(0).tolist()
-                    all_centroids[f'{img_fn}'] = centroids
+                    # all_centroids[f'{img_fn}'] = centroids
+                    all_centroids[f'{img_fn}_{hand_side}'] = centroids
+
             
         # Render front view
         if args.full_frame and len(all_verts) > 0:
@@ -216,4 +212,16 @@ def main():
         json.dump(all_centroids, f)
         
 if __name__ == '__main__':
-    main()
+    parser = argparse.ArgumentParser(description='HaMeR demo code')
+    parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
+    parser.add_argument('--img_folder', type=str, default='hamer_detector/example_data/test-env/', help='Folder with input images')
+    parser.add_argument('--out_folder', type=str, default='hamer_detector/example_data/realsense-test-hamer/', help='Output folder to save rendered results')
+    parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
+    parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
+    parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=True, help='If set, save meshes to disk also')
+    parser.add_argument('--batch_size', type=int, default=48, help='Batch size for inference/fitting')
+    parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
+    parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
+    parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
+    args = parser.parse_args()
+    main(args)
