@@ -19,12 +19,12 @@ def visualize_and_save_orientation(mesh_path, overlay_image, output_image_path):
     if verts.shape[0] == 0:
         print(f"❌ Empty mesh: {mesh_path}")
         return
-
+    
     centered = verts - verts.mean(axis=0)
     _, _, Vt = np.linalg.svd(centered)
     orientation = Vt[2]
-    if orientation[1] < 0:
-        orientation = -orientation
+    # if orientation[1] < 0:
+    #     orientation = -orientation
     center = verts.mean(axis=0)
 
     # xlim = [-1, 1]
@@ -70,6 +70,14 @@ def add_sphere(mesh_folder, image_folder, output_folder):
             print(f"❌ Skipping empty mesh: {fname}")
             continue
 
+
+        frame_id = fname.replace(".obj", "").split("_")[1]
+        img_name = f"frame_{frame_id}_final.png"
+        img_path = os.path.join(image_folder, img_name)
+        if not os.path.exists(img_path):
+            print(f"⚠️ Image not found: {img_name}")
+            continue
+
         # center = verts.mean(axis=0)
         # center = verts[0]
         # centered = verts - center
@@ -93,8 +101,14 @@ def add_sphere(mesh_folder, image_folder, output_folder):
         #     orientation = -orientation
         # center = wrist
 
-        center = mesh.center_mass
-        orientation = mesh.principal_inertia_vectors[2] 
+        centered = verts - verts.mean(axis=0)
+        _, _, Vt = np.linalg.svd(centered)
+        orientation = Vt[2]
+        # if orientation[1] < 0:
+        #     orientation = -orientation
+        center = verts.mean(axis=0)
+        # center = mesh.center_mass
+        # orientation = mesh.principal_inertia_vectors[2] 
 
         sphere = trimesh.creation.uv_sphere(radius=0.1)
         normals = sphere.vertices / np.linalg.norm(sphere.vertices, axis=1, keepdims=True)
@@ -136,12 +150,6 @@ def add_sphere(mesh_folder, image_folder, output_folder):
         color, _ = r.render(scene)
         rendered = color.astype(np.float32) / 255.0
 
-        frame_id = fname.replace(".obj", "").split("_")[1]
-        img_name = f"frame_{frame_id}_final.png"
-        img_path = os.path.join(image_folder, img_name)
-        if not os.path.exists(img_path):
-            print(f"⚠️ Image not found: {img_name}")
-            continue
 
         original_img = cv2.imread(img_path)
         original_img = cv2.resize(original_img, (640, 480))

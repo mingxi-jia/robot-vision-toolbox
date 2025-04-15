@@ -19,26 +19,26 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     sphere_out_dir = os.path.abspath(sphere_out_dir)
     background_img = os.path.abspath(background_img)
 
-    print("🔹 Step 1: Extracting video frames...")
-    subsample_video(video_path, skip_every_frame=1, output_dir=tmp_img_dir, new_size=(640, 480))
+    # print("🔹 Step 1: Extracting video frames...")
+    # subsample_video(video_path, skip_every_frame=1, output_dir=tmp_img_dir, new_size=(640, 480))
 
-    print("🔹 Step 2: Running HaMeR hand detection and 3D reconstruction...")
-    hamer_args = argparse.Namespace(
-        checkpoint=DEFAULT_CHECKPOINT,
-        img_folder=tmp_img_dir,
-        out_folder=hamer_out_dir,
-        side_view=False,
-        full_frame=True,
-        save_mesh=True,
-        batch_size=48,
-        rescale_factor=2.0,
-        body_detector="vitdet",
-        file_type=["*.jpg", "*.png"]
-    )
-    hamer_main(hamer_args)
+    # print("🔹 Step 2: Running HaMeR hand detection and 3D reconstruction...")
+    # hamer_args = argparse.Namespace(
+    #     checkpoint=DEFAULT_CHECKPOINT,
+    #     img_folder=tmp_img_dir,
+    #     out_folder=hamer_out_dir,
+    #     side_view=False,
+    #     full_frame=True,
+    #     save_mesh=True,
+    #     batch_size=48,
+    #     rescale_factor=2.0,
+    #     body_detector="vitdet",
+    #     file_type=["*.jpg", "*.png"]
+    # )
+    # hamer_main(hamer_args)
 
-    print("🔹 Step 3: Segmenting and removing human from video...")
-    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
+    # print("🔹 Step 3: Segmenting and removing human from video...")
+    # process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
 
     # print("🔹 Step 3.5: Remove hand again to clean up the image...")
 
