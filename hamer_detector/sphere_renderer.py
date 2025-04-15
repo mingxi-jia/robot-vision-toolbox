@@ -195,9 +195,14 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
 
     # Example camera intrinsics for (640 x 480). Adjust to your real camera:
     # fx, fy ~ focal lengths; cx, cy ~ principal point
-    cam_intrinsic = np.array([[389.0,   0.0, 323.8],
-                              [  0.0, 389.0, 237.1],
-                              [  0.0,   0.0,   1.0]], dtype=np.float32)
+    # cam_intrinsic = np.array([[389.0,   0.0, 323.8],
+    #                           [  0.0, 389.0, 237.1],
+    #                           [  0.0,   0.0,   1.0]],
+    #                            dtype=np.float32)
+    cam_intrinsic = np.array([[387.12,   0.0, 386.76],
+                              [  0.0, 321.97, 243.21],
+                              [  0.0,   0.0,   1.0]],
+                               dtype=np.float32)
 
     # Example camera extrinsic as identity (if your images are already in correct orientation).
     # If you have a real extrinsic matrix, load/use that.
@@ -219,6 +224,8 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
     img_path_list.sort()
     # Loop over all 20 images
     for i in img_path_list:
+        if not i.startswith('frame'):
+            continue
         # Load image (assuming they are named img_00.jpg, img_01.jpg, etc.)
         img_path = os.path.join(image_folder, i)
         if not os.path.exists(img_path):
@@ -267,25 +274,25 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
         background = pil_img.convert("RGBA")
         foreground = rendered_pil.convert("RGBA")
         # Use alpha=0.7, for example
-        blended = Image.blend(background, foreground, alpha=0.9)
+        blended = Image.blend(background, foreground, alpha=0.3)
 
         # Save the result
         out_path = os.path.join(out_folder, i)
         blended.save(out_path)
-        # blended.show()
+        blended.show()
         print(f"Saved: {out_path}")
 
 if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Render spheres using HaMeR 3D centroids and overlay them onto images.")
-    parser.add_argument("--image_folder", type=str, default="hamer_detector/example_data/test-env-pose-seg-2",
+    parser.add_argument("--image_folder", type=str, default="hamer_detector/segmentation_output",
                         help="Folder containing background images.")
-    parser.add_argument("--position_file", type=str, default="hamer_detector/example_data/realsense-test-hamer/centroids.yml",
+    parser.add_argument("--position_file", type=str, default="hamer_detector/hamer_output/centroids.yml",
                         help="YAML file containing 3D positions for rendering.")
-    parser.add_argument("--out_folder", type=str, default="hamer_detector/example_data/realsense-test-spheres",
+    parser.add_argument("--out_folder", type=str, default="hamer_detector/final_output",
                         help="Folder to save blended sphere-overlaid images.")
-    parser.add_argument("--handedness", type=str, default="right",
+    parser.add_argument("--handedness", type=str, default="left",
                         help="Select sphere overlay on designated hand: left or right(defualt)")
     args = parser.parse_args()
 

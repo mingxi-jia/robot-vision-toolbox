@@ -344,7 +344,7 @@ def replace_background(image, mask, reference_image):
 
     # Replace the top 1/3 of the image with the reference background
     height = image.shape[0]
-    top_section = height // 3  # Calculate the height for top 1/3
+    top_section = 2*height // 5  # Calculate the height for top 1/3
     result_image[:top_section, :] = reference_resized[:top_section, :]  # Replace top section
 
     return result_image
@@ -392,7 +392,7 @@ def replace_background(image, mask, reference_image):
 #         final=final_result,
 #         title_suffix=f"(Image)"
 #     )
-def process_video(video_path, output_folder, background_path=None):
+def process_video(video_path, output_folder, background_path=None, hand_mask_folder = None, handedness = 'left'):
     """
     Processes a video frame by frame using MediaPipe + SAM2 segmentation,
     falls back to MediaPipe or optical flow when needed,
@@ -540,7 +540,7 @@ def process_video(video_path, output_folder, background_path=None):
 
     print("✅ Video processing complete! Output saved to:", output_folder)
 
-def process_image_folder(image_folder, output_folder, background_path=None):
+def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None):
     """
     Processes a folder of images using MediaPipe + SAM2 segmentation,
     falls back to MediaPipe or optical flow when needed,
@@ -565,9 +565,16 @@ def process_image_folder(image_folder, output_folder, background_path=None):
     prev_mask = None
     prev_landmarks = None
 
+    # hand_mask_path = os.path.join(hand_mask_folder, f"frame_{frame_count:06d}_{handedness}_hand_mask.png")
+    # hand_mask = cv2.imread(hand_mask_path, cv2.IMREAD_GRAYSCALE)
+    # if hand_mask is not None:
+    #     hand_mask = (hand_mask > 127).astype(np.uint8)
+
+
     for idx, image_path in enumerate(image_paths):
         frame = cv2.imread(image_path)
-        frame_count = idx  # Use index for naming
+        frame_count = int(image_paths[idx][-10:-4])
+        # frame_count = idx  # Use index for naming
 
         final_output_path = os.path.join(output_folder, f"frame_{frame_count:06d}_final.png")
         landmark_flow = None
@@ -613,7 +620,28 @@ def process_image_folder(image_folder, output_folder, background_path=None):
                 if prev_frame is not None and prev_mask is not None:
                     refined_mask, _ = warp_mask_with_optical_flow(prev_frame, frame, prev_mask)
 
+            # merge mask with Mano hand model
+            mask_path = os.path.join(hand_model_path, f"frame_{frame_count:06d}_handmask.png")
+            hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            if hand_mask is not None:
+                hand_mask = (hand_mask > 127).astype(np.uint8)
+                print(f"✔️ Loaded hand mask for frame {frame_count}")
+                # Apply dilation
+                kernel_size = 5  # Adjust for how much wider you want it
+                iterations = 1   # Number of dilation passes
+
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                dilated_mask = cv2.dilate(hand_mask, kernel, iterations=iterations)
+
+                # Combine with refined human mask
+                refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
+            else:
+                print(f"⚠️ No hand mask found for frame {frame_count}")
+            # cv2.imshow("mask", refined_mask*255)
+            # cv2.waitKey(0)
+            # merge hand mask into refined mask
             final_result = replace_background(image, refined_mask, reference_image) if reference_image is not None else frame.copy()
+
 
             if prev_frame is not None and prev_landmarks is not None:
                 good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
@@ -647,6 +675,23 @@ def process_image_folder(image_folder, output_folder, background_path=None):
                     segmentation_mask = segment_human(frame, good_next.astype(int))
                     refined_mask = segmentation_mask.copy()
 
+                    # merge mask with Mano hand model
+                    mask_path = os.path.join(hand_model_path, f"frame_{frame_count:06d}_handmask.png")
+                    hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    if hand_mask is not None:
+                        hand_mask = (hand_mask > 127).astype(np.uint8)
+                        print(f"✔️ Loaded hand mask for frame {frame_count}")
+                        # Apply dilation
+                        kernel_size = 5  # Adjust for how much wider you want it
+                        iterations = 1   # Number of dilation passes
+
+                        kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                        dilated_mask = cv2.dilate(hand_mask, kernel, iterations=iterations)
+
+                        # Combine with refined human mask
+                        refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
+                        
+
                     final_result = replace_background(frame, refined_mask, reference_image) if reference_image is not None else frame.copy()
 
                     visualize_segmentation_debug(
@@ -673,16 +718,16 @@ def process_image_folder(image_folder, output_folder, background_path=None):
     print("✅ Image folder processing complete.")
 
 
-def main():
-    """
-    Main function to process images from a folder.
-    """
+# def main():
+#     """
+#     Main function to process images from a folder.
+#     """
 
-    background_path = "human_segmentor/first_frame.png"
-    video_path = "/home/xhe71/Downloads/human (1).mp4"  # Change this to your input video
-    output_folder = "hamer_detector/example_data/test-env-pose-seg-2/"
+#     background_path = "human_segmentor/first_frame.png"
+#     video_path = "/home/xhe71/Downloads/human (1).mp4"  # Change this to your input video
+#     output_folder = "hamer_detector/example_data/test-env-pose-seg-2/"
 
-    process_video(video_path, output_folder, background_path)
+#     process_video(video_path, output_folder, background_path)
     
 # if __name__ == "__main__":
 #     main()
@@ -699,12 +744,12 @@ def main():
 #                         help="Path to background image for replacement")
 
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser(description="Segment folder of images using MediaPipe + SAM2")
-    parser.add_argument("--image_folder", type=str,default= "/home/xhe71/Desktop/robotool_test/tmp_imgs", help="Path to input image folder")
-    parser.add_argument("--output_folder", type=str,default= "hamer_detector/example_data/test-env-pose-seg-2/", help="Path to save processed images and debug outputs")
-    parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png", help="Background image for replacement")
-    args = parser.parse_args()
+# if __name__ == "__main__":
+#     import argparse
+#     parser = argparse.ArgumentParser(description="Segment folder of images using MediaPipe + SAM2")
+#     parser.add_argument("--image_folder", type=str,default= "/home/xhe71/Desktop/robotool_test/tmp_imgs", help="Path to input image folder")
+#     parser.add_argument("--output_folder", type=str,default= "hamer_detector/example_data/test-env-pose-seg-2/", help="Path to save processed images and debug outputs")
+#     parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png", help="Background image for replacement")
+#     args = parser.parse_args()
 
-    process_image_folder(args.image_folder, args.output_folder, args.background_path)
+#     process_image_folder(args.image_folder, args.output_folder, args.background_path)

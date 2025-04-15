@@ -1,7 +1,7 @@
 import cv2
 
-video_path = "/path/to/your/video.mp4"
-output_path = "first_frame.png"
+video_path = "/home/xhe71/Downloads/test1.mp4"
+output_path = "/home/xhe71/Downloads/first_frame.png"
 
 cap = cv2.VideoCapture(video_path)
 ret, frame = cap.read()

@@ -7,8 +7,8 @@ from sphere_renderer import main as sphere_render_main
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 import sys
 sys.path.append('./')
-from human_segmentor.human_pose_segmentor_mp_sam import process_video
-
+from human_segmentor.human_pose_segmentor_mp_sam import process_image_folder
+from human_segmentor.remove_hand_with_obj import add_sphere
 
 def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_out_dir, background_img, handedness = 'right'):
     # Make all paths absolute
@@ -38,26 +38,40 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     hamer_main(hamer_args)
 
     print("🔹 Step 3: Segmenting and removing human from video...")
-    process_video(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img)
+    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
+
+    # print("🔹 Step 3.5: Remove hand again to clean up the image...")
 
     print("🔹 Step 4: Rendering spheres and blending with background...")
-    sphere_render_main(segmentation_out_dir, os.path.join(hamer_out_dir, "centroids.yml"), sphere_out_dir, handedness)
+    # sphere_render_main(segmentation_out_dir, os.path.join(hamer_out_dir, "centroids.yml"), sphere_out_dir, handedness)
+    add_sphere(mesh_folder = hamer_out_dir, image_folder=segmentation_out_dir, output_folder=sphere_out_dir)
 
     print("🔹 Step 5: Compiling final blended video...")
-    os.system(f"ffmpeg -framerate 30 -i {sphere_out_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p {sphere_out_dir}/output_final_video.mp4")
+    os.system(f"cd {sphere_out_dir}")
+    # Step 1: Generate list.txt
+    with open("list.txt", "w") as f:
+        for filename in sorted(os.listdir(".")):
+            if filename.endswith("_final.png"):
+                f.write(f"file '{filename}'\n")
+
+    # Step 2: Use ffmpeg to create video
+    os.system("ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4")
+
+
+    # os.system(f"ffmpeg -framerate 30 -i {sphere_out_dir}/frame_%06d.png -c:v libx264 -pix_fmt yuv420p {sphere_out_dir}/output_final_video.mp4")
     print(f"🎬 Final video saved to: {sphere_out_dir}/output_final_video.mp4")
 
     print("✅ All steps complete. Final images saved to:", sphere_out_dir)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Full pipeline: extract video ➜ segment ➜ reconstruct ➜ render spheres")
-    parser.add_argument("--video_path", type=str, default = "/home/xhe71/Downloads/human (1).mp4", help="Path to the input video file")
+    parser.add_argument("--video_path", type=str, default = "/home/xhe71/Downloads/test2_2.mp4", help="Path to the input video file")
     parser.add_argument("--tmp_img_dir", type=str, default="hamer_detector/tmp_imgs", help="Temp folder to store extracted frames")
     parser.add_argument("--segmentation_out_dir", type=str, default="hamer_detector/segmentation_output", help="Folder to store segmentation results")
     parser.add_argument("--hamer_out_dir", type=str, default="hamer_detector/hamer_output", help="Folder to store HaMeR outputs")
     parser.add_argument("--sphere_out_dir", type=str, default="hamer_detector/final_output", help="Folder to store blended sphere output")
-    parser.add_argument("--background_img", type=str, default = "human_segmentor/first_frame.png", help="Path to background image to use for replacement")
-    parser.add_argument("--handedness", type=str, default="right",
+    parser.add_argument("--background_img", type=str, default = "hamer_detector/example_data/first_frame.png", help="Path to background image to use for replacement")
+    parser.add_argument("--handedness", type=str, default="left",
                     help="Select sphere overlay on designated hand: left or right(defualt)")
     args = parser.parse_args()
 

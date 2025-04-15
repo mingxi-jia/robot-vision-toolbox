@@ -153,6 +153,10 @@ def main(args):
                                         mesh_base_color=LIGHT_BLUE,
                                         scene_bg_color=(1, 1, 1),
                                         )
+                reg_img_disp = (regression_img[:, :, ::-1] * 255).astype(np.uint8)
+                # cv2.imshow("Regression Image", reg_img_disp)
+                # cv2.waitKey(0)
+
 
                 if args.side_view:
                     side_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
@@ -161,9 +165,17 @@ def main(args):
                                             mesh_base_color=LIGHT_BLUE,
                                             scene_bg_color=(1, 1, 1),
                                             side_view=True)
+                    # side_img_disp = (side_img[:, :, ::-1] * 255).astype(np.uint8)
+                    # cv2.imshow("Side View", side_img_disp)
+                    # cv2.waitKey(0)
                     final_img = np.concatenate([input_patch, regression_img, side_img], axis=1)
                 else:
                     final_img = np.concatenate([input_patch, regression_img], axis=1)
+
+
+                # final_img_disp = (final_img[:, :, ::-1] * 255).astype(np.uint8)
+                # cv2.imshow("Final View (concatenated)", final_img_disp)
+                # cv2.waitKey(0)
 
                 # cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
                 hand_side = "right" if batch['right'][n].item() == 1 else "left"
@@ -199,6 +211,14 @@ def main(args):
                 focal_length=scaled_focal_length,
             )
             cam_view = renderer.render_rgba_multiple(all_verts, cam_t=all_cam_t, render_res=img_size[n], is_right=all_right, **misc_args)
+            # Save binary mask of rendered hand (from alpha channel)
+            hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+
+            # Optional: Display the mask
+            # cv2.imshow("Hand Mask", hand_mask)
+            # cv2.waitKey(0)
+
 
             # Overlay image
             input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
@@ -206,7 +226,10 @@ def main(args):
             input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
 
             cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
-    
+            # overlay_disp = (input_img_overlay[:, :, ::-1] * 255).astype(np.uint8)
+            # cv2.imshow("Overlay with Original Image", overlay_disp)
+            # cv2.waitKey(0)
+
     # Save hand centroids to disk
     with open(os.path.join(args.out_folder, f'centroids.yml'), 'w') as f:
         json.dump(all_centroids, f)
