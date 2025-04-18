@@ -62,6 +62,8 @@ def main(args):
     all_centroids = dict()
     
     # Iterate over all images in folder
+    all_hand_results = {}
+
     for img_path in img_paths:
         img_cv2 = cv2.imread(str(img_path))
 
@@ -157,7 +159,6 @@ def main(args):
                 # cv2.imshow("Regression Image", reg_img_disp)
                 # cv2.waitKey(0)
 
-
                 if args.side_view:
                     side_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
                                             out['pred_cam_t'][n].detach().cpu().numpy(),
@@ -188,6 +189,18 @@ def main(args):
                 is_right = batch['right'][n].cpu().numpy()
                 verts[:,0] = (2*is_right-1)*verts[:,0]
                 cam_t = pred_cam_t_full[n]
+                # Get predicted global rotation
+                global_orient = out['pred_mano_params']['global_orient'][n].detach().cpu().numpy().tolist()
+
+                # Save to batch dictionary
+                hand_key = f"{img_fn}_{hand_side}"
+
+                all_hand_results[hand_key] = {
+                    "pred_cam_t": cam_t.tolist(),
+                    "global_orient": global_orient,
+                    "is_right": bool(is_right),
+                }
+
                 all_verts.append(verts)
                 all_cam_t.append(cam_t)
                 all_right.append(is_right)
@@ -210,6 +223,7 @@ def main(args):
                 scene_bg_color=(1, 1, 1),
                 focal_length=scaled_focal_length,
             )
+            print(f"----------Scaled focal length{scaled_focal_length}--------------------")
             cam_view = renderer.render_rgba_multiple(all_verts, cam_t=all_cam_t, render_res=img_size[n], is_right=all_right, **misc_args)
             # Save binary mask of rendered hand (from alpha channel)
             hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
@@ -222,6 +236,7 @@ def main(args):
 
             # Overlay image
             input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
+            print(np.shape(input_img))
             input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
             input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
 
@@ -233,6 +248,10 @@ def main(args):
     # Save hand centroids to disk
     with open(os.path.join(args.out_folder, f'centroids.yml'), 'w') as f:
         json.dump(all_centroids, f)
+    
+    with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
+        json.dump(all_hand_results, f, indent=2)
+
         
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HaMeR demo code')
@@ -243,7 +262,7 @@ if __name__ == '__main__':
     parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
     parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=True, help='If set, save meshes to disk also')
     parser.add_argument('--batch_size', type=int, default=48, help='Batch size for inference/fitting')
-    parser.add_argument('--rescale_factor', type=float, default=2.0, help='Factor for padding the bbox')
+    parser.add_argument('--rescale_factor', type=float, default=1.0, help='Factor for padding the bbox')
     parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
     args = parser.parse_args()

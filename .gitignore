@@ -3,6 +3,7 @@ raw_data
 *.png
 *.jpg
 *.obj
+*.mp4
 submodules/segment-anything-2-real-time/
 submodules/hamer/
 hamer_detector/example_data/

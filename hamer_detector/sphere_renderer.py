@@ -98,6 +98,8 @@ class HandMarker:
             znear=self._znear,
             zfar=self._zfar,
         )
+        print(cam_extrinsic)
+        print(cam_intrinsic)
         rotation_matrix = cam_extrinsic[:3, :3]
 
         # Define the rotation angle in radians (180 degrees)
@@ -139,9 +141,10 @@ class HandMarker:
                 }
                 sphere_texture_name = color_mapping[sphere_colors[i]]
 
+            current_path = os.path.dirname(os.path.realpath(__file__))
             sphere_texture = pyrender.Texture(
                 source=Image.open(
-                    os.path.join("./hamer_detector/sphere_textures/", sphere_texture_name)
+                    os.path.join(current_path, "sphere_textures", sphere_texture_name)
                 ).convert("RGBA"),
                 source_channels="RGBA",
             )
@@ -180,11 +183,15 @@ class HandMarker:
         rendered_img, _ = self._offscreen_renderer.render(scene, flags)
         return rendered_img
 
-def main(image_folder, position_file, out_folder, handedness = 'right'):
+def main():
     # Example setup:
     # Folder containing 20 images: "images/"
     # A file containing 20 (x,y,z) positions: "positions.npy" (shape: (20,3))
     # Modify these paths as needed.
+    image_folder = "/home/xhe71/Desktop/demo_data/0417_test"
+    position_file = "/home/xhe71/Desktop/demo_data/0417_test_hamer/centroids.yml"
+    out_folder = "/home/xhe71/Desktop/demo_data/0417_test_out"
+
     os.makedirs(out_folder, exist_ok=True)
 
     # Load your 20 positions (shape: (20,3))
@@ -195,14 +202,9 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
 
     # Example camera intrinsics for (640 x 480). Adjust to your real camera:
     # fx, fy ~ focal lengths; cx, cy ~ principal point
-    # cam_intrinsic = np.array([[389.0,   0.0, 323.8],
-    #                           [  0.0, 389.0, 237.1],
-    #                           [  0.0,   0.0,   1.0]],
-    #                            dtype=np.float32)
-    cam_intrinsic = np.array([[387.12,   0.0, 386.76],
-                              [  0.0, 321.97, 243.21],
-                              [  0.0,   0.0,   1.0]],
-                               dtype=np.float32)
+    cam_intrinsic = np.array([[389.0,   0.0, 323.8],
+                              [  0.0, 389.0, 237.1],
+                              [  0.0,   0.0,   1.0]], dtype=np.float32)
 
     # Example camera extrinsic as identity (if your images are already in correct orientation).
     # If you have a real extrinsic matrix, load/use that.
@@ -214,9 +216,9 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
         image_width=width,
         image_height=height,
         camera_scales=[1.0],
-        sphere_radius=0.2,  # pick a radius you prefer
-        znear=0.01,
-        zfar=5.0,
+        sphere_radius=0.05,  # pick a radius you prefer
+        znear=0.4,
+        zfar=20.0,
     )
 
     img_path_list = os.listdir(image_folder)
@@ -224,8 +226,6 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
     img_path_list.sort()
     # Loop over all 20 images
     for i in img_path_list:
-        if not i.startswith('frame'):
-            continue
         # Load image (assuming they are named img_00.jpg, img_01.jpg, etc.)
         img_path = os.path.join(image_folder, i)
         if not os.path.exists(img_path):
@@ -235,16 +235,7 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
         pil_img = pil_img.resize((width, height))  # ensure it matches the renderer size if needed
 
         # Build a 4x4 transform for the sphere at positions_xyz[i]
-        image_fn = i.split(".")[0]
-        if "final" in image_fn:
-            image_fn = image_fn[:-6]
-        if handedness.lower() == 'right':
-            image_fn = image_fn +'_right'
-        else:
-            image_fn = image_fn +'_left'
-
-        if image_fn not in positions_xyz:
-            continue
+        image_fn = i.split(".")[0] + '_left'
         x, y, z = positions_xyz[image_fn]
         T = np.eye(4, dtype=np.float32)
         T[0, 3] = x
@@ -260,13 +251,13 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
             cam_extrinsic=cam_extrinsic,
             joint_matrices=[T],
             joint_opens=[1],
-            camera_scale=1.0,
+            camera_scale=1,
             sphere_colors=["green"],
         )
 
         # Convert rendered to a PIL Image
         rendered_pil = Image.fromarray(rendered)
-
+        # print()
         # Optional Step: Overlay or alpha-blend rendered sphere with the real image.
         # In simple form, you can just take the rendered sphere's color wherever it's non-black.
         # A more advanced approach would involve alpha channels, segmentation, etc.
@@ -274,26 +265,12 @@ def main(image_folder, position_file, out_folder, handedness = 'right'):
         background = pil_img.convert("RGBA")
         foreground = rendered_pil.convert("RGBA")
         # Use alpha=0.7, for example
-        blended = Image.blend(background, foreground, alpha=0.3)
+        blended = Image.blend(background, foreground, alpha=0.7)
 
         # Save the result
         out_path = os.path.join(out_folder, i)
         blended.save(out_path)
-        blended.show()
         print(f"Saved: {out_path}")
 
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Render spheres using HaMeR 3D centroids and overlay them onto images.")
-    parser.add_argument("--image_folder", type=str, default="hamer_detector/segmentation_output",
-                        help="Folder containing background images.")
-    parser.add_argument("--position_file", type=str, default="hamer_detector/hamer_output/centroids.yml",
-                        help="YAML file containing 3D positions for rendering.")
-    parser.add_argument("--out_folder", type=str, default="hamer_detector/final_output",
-                        help="Folder to save blended sphere-overlaid images.")
-    parser.add_argument("--handedness", type=str, default="left",
-                        help="Select sphere overlay on designated hand: left or right(defualt)")
-    args = parser.parse_args()
-
-    main(args.image_folder, args.position_file, args.out_folder, args.handedness)
+    main()

@@ -7,6 +7,9 @@ import cv2
 import argparse
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import json
+# import os
+# os.environ["PYOPENGL_PLATFORM"] = "glfw"
 
 
 def visualize_and_save_orientation(mesh_path, overlay_image, output_image_path):
@@ -58,6 +61,9 @@ def visualize_and_save_orientation(mesh_path, overlay_image, output_image_path):
 def add_sphere(mesh_folder, image_folder, output_folder):
     os.makedirs(output_folder, exist_ok=True)
     texture_image = Image.open("hamer_detector/sphere_textures/bigger_distinguishable_checkerboard_texture.png").convert("RGBA")
+    # Load hand pose camera info
+    with open(f"{mesh_folder}/hand_pose_camera_info.json", "r") as f:
+        hand_pose_data = json.load(f)
 
     for fname in sorted(os.listdir(mesh_folder)):
         if not fname.endswith(".obj"):
@@ -101,16 +107,24 @@ def add_sphere(mesh_folder, image_folder, output_folder):
         #     orientation = -orientation
         # center = wrist
 
-        centered = verts - verts.mean(axis=0)
-        _, _, Vt = np.linalg.svd(centered)
-        orientation = Vt[2]
-        # if orientation[1] < 0:
-        #     orientation = -orientation
-        center = verts.mean(axis=0)
-        # center = mesh.center_mass
-        # orientation = mesh.principal_inertia_vectors[2] 
+        # centered = verts - verts.mean(axis=0)
+        # _, _, Vt = np.linalg.svd(centered)
+        # orientation = Vt[2]
+        # # if orientation[1] < 0:
+        # #     orientation = -orientation
+        # center = verts.mean(axis=0)
+        # # center = mesh.center_mass
+        orientation = mesh.principal_inertia_vectors[2] 
+        hand_key = fname.replace(".obj", "")
+        if hand_key not in hand_pose_data:
+            print(f"⚠️ Missing extrinsics for: {hand_key}")
+            continue
 
-        sphere = trimesh.creation.uv_sphere(radius=0.1)
+        pose_info = hand_pose_data[hand_key]
+        cam_t = np.array(pose_info["pred_cam_t"])  # translation
+        orientation_mat = np.array(pose_info["global_orient"])  # 3x3 rotation
+        
+        sphere = trimesh.creation.uv_sphere(radius=0.05)
         normals = sphere.vertices / np.linalg.norm(sphere.vertices, axis=1, keepdims=True)
         u = 0.5 + np.arctan2(normals[:, 2], normals[:, 0]) / (2 * np.pi)
         v = 0.5 - np.arcsin(normals[:, 1]) / np.pi
@@ -119,7 +133,9 @@ def add_sphere(mesh_folder, image_folder, output_folder):
         sphere.visual.material.image = np.array(texture_image)
 
         T = np.eye(4)
-        T[:3, 3] = center
+        T[:3, :3] = orientation_mat
+        T[:3, 3] = -cam_t
+        
 
         z_axis = np.array([0, 0, 1])
         target = orientation / np.linalg.norm(orientation)
@@ -140,32 +156,78 @@ def add_sphere(mesh_folder, image_folder, output_folder):
         )
         sphere_mesh = pyrender.Mesh.from_trimesh(sphere, material=material, smooth=False)
         scene.add(sphere_mesh, pose=T)
-        cam = pyrender.IntrinsicsCamera(fx=387.12, fy=386.77, cx=321.97, cy=243.21)
-        # cam = pyrender.IntrinsicsCamera(fx=615.35, fy=615.40, cx=313.39, cy=251.59)
-        scene.add(cam, pose=np.eye(4))
+        cam_intrinsic = np.array([
+            [387.12786865234375, 0.0,               321.97259521484375], 
+            [0.0,                386.7669677734375, 243.21249389648438], 
+            [0.0,                0.0,               1]
+        ])
+        fx=cam_intrinsic[0, 0]
+        fy=cam_intrinsic[1, 1]
+        cx=cam_intrinsic[0, 2]
+        cy=cam_intrinsic[1, 2]
+        cam = pyrender.IntrinsicsCamera(fx=cam_intrinsic[0, 0],
+            fy=cam_intrinsic[1, 1],
+            cx=cam_intrinsic[0, 2],
+            cy=cam_intrinsic[1, 2]
+            )
+        camera_pose = np.eye(4)
+        camera_pose[:3, 3] = cam_t.copy()
+        camera_pose[0] *= -1.0  # flip x (camera convention fix from HaMeR)
+
+        camera_node = pyrender.Node(camera=cam, matrix=camera_pose)
+        scene.add_node(camera_node)
+
         light = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
         scene.add(light, pose=np.eye(4))
 
         r = pyrender.OffscreenRenderer(viewport_width=640, viewport_height=480)
-        color, _ = r.render(scene)
+        color, _ = r.render(scene, flags = pyrender.RenderFlags.RGBA)
+        r.delete()  
         rendered = color.astype(np.float32) / 255.0
 
+        cam_view = rendered
 
-        original_img = cv2.imread(img_path)
-        original_img = cv2.resize(original_img, (640, 480))
-        original_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
 
-        mask = np.any(rendered < 0.99, axis=-1).astype(np.float32)[..., None]
-        blended = original_img * (1 - mask) + rendered * mask
+        img_cv2 = cv2.imread(img_path)
+        # original_img = cv2.resize(original_img, (640, 480))
+        # original_img = cv2.cvtColor(original_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+
+        # RealSense camera intrinsics (from your screenshot)
+        # fx, fy = 387.12, 386.77
+        # cx, cy = 321.97, 243.21
+        # K = np.array([[fx, 0, cx],
+        #             [0, fy, cy],
+        #             [0,  0,  1]], dtype=np.float32)
+
+        # Distortion coefficients (Inverse Brown–Conrady: only k1 is negative, rest are 0)
+        # dist_coeffs = np.array([-0.0570749416947365,0.0687180981040001,      -0.000155126384925097,      0.00105448020622134 ,     -0.0224851798266172  ], dtype=np.float32)
+
+        # # Undistort image
+        # undistorted_img = cv2.undistort(original_img, K, dist_coeffs)
+
+        # # Convert to RGB and normalize
+        # undistorted_img = cv2.cvtColor(undistorted_img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+
+        # mask = np.any(rendered_rgb < 0.99, axis=-1).astype(np.float32)[..., None]
+        # blended = original_img * (1 - mask) + rendered_rgb * mask
 
         out_path = os.path.join(output_folder, img_name)
-        blended_save = (blended * 255).astype(np.uint8)[..., ::-1]
-        cv2.imwrite(out_path, blended_save)
+        # blended_save = (blended * 255).astype(np.uint8)[..., ::-1]
+
+        # Overlay image
+        input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
+        print(np.shape(input_img))
+        input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
+        input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
+
+        cv2.imwrite(out_path, 255*input_img_overlay[:, :, ::-1])
+        # cv2.imwrite(out_path, blended_save)
         print(f"✅ Saved: {out_path}")
 
         debug_image_name = f"frame_{frame_id}_debug.png"
         debug_out_path = os.path.join(output_folder, debug_image_name)
-        visualize_and_save_orientation(mesh_path=mesh_path, overlay_image=blended, output_image_path=debug_out_path)
+        # visualize_and_save_orientation(mesh_path=mesh_path, overlay_image=blended, output_image_path=debug_out_path)
 
 
 if __name__ == "__main__":

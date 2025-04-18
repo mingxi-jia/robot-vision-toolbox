@@ -9,6 +9,8 @@ import sys
 sys.path.append('./')
 from human_segmentor.human_pose_segmentor_mp_sam import process_image_folder
 from human_segmentor.remove_hand_with_obj import add_sphere
+# import os
+# os.environ["PYOPENGL_PLATFORM"] = "glfw"  # force use of native OpenGL
 
 def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_out_dir, background_img, handedness = 'right'):
     # Make all paths absolute
@@ -31,7 +33,7 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     #     full_frame=True,
     #     save_mesh=True,
     #     batch_size=48,
-    #     rescale_factor=2.0,
+    #     rescale_factor=1.0,
     #     body_detector="vitdet",
     #     file_type=["*.jpg", "*.png"]
     # )
@@ -40,7 +42,7 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     # print("🔹 Step 3: Segmenting and removing human from video...")
     # process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
 
-    # print("🔹 Step 3.5: Remove hand again to clean up the image...")
+    print("🔹 Step 3.5: Remove hand again to clean up the image...")
 
     print("🔹 Step 4: Rendering spheres and blending with background...")
     # sphere_render_main(segmentation_out_dir, os.path.join(hamer_out_dir, "centroids.yml"), sphere_out_dir, handedness)
