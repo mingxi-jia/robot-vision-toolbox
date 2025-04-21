@@ -29,25 +29,25 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     else:
         background_img = os.path.abspath(background_img)
 
-    # print("🔹 Step 1: Extracting video frames...")
-    # subsample_video(video_path, skip_every_frame=1, output_dir=tmp_img_dir, new_size=(640, 480))
+    print("🔹 Step 1: Extracting video frames...")
+    subsample_video(video_path, skip_every_frame=1, output_dir=tmp_img_dir, new_size=(640, 480))
 
-    # print("🔹 Step 2: Running HaMeR hand detection and 3D reconstruction...")
-    # hamer_args = argparse.Namespace(
-    #     checkpoint=DEFAULT_CHECKPOINT,
-    #     img_folder=tmp_img_dir,
-    #     out_folder=hamer_out_dir,
-    #     side_view=False,
-    #     full_frame=True,
-    #     save_mesh=True,
-    #     batch_size=48,
-    #     rescale_factor=1.0,
-    #     body_detector="vitdet",
-    #     file_type=["*.jpg", "*.png"]
-    # )
-    # detect_hand(hamer_args)
+    print("🔹 Step 2: Running HaMeR hand detection and 3D reconstruction...")
+    hamer_args = argparse.Namespace(
+        checkpoint=DEFAULT_CHECKPOINT,
+        img_folder=tmp_img_dir,
+        out_folder=hamer_out_dir,
+        side_view=False,
+        full_frame=True,
+        save_mesh=True,
+        batch_size=48,
+        rescale_factor=1.0,
+        body_detector="vitdet",
+        file_type=["*.jpg", "*.png"]
+    )
+    detect_hand(hamer_args)
     
-    # convert_images_to_video(hamer_out_dir)
+    convert_images_to_video(hamer_out_dir)
     # step 2.5 Smooth centroid data
     smooth_KF_yml(os.path.join(hamer_out_dir, 'centroids.yml'))
 
@@ -55,9 +55,9 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     smooth_hand_pose_json_KF(os.path.join(hamer_out_dir, 'hand_pose_camera_info.json'))
     print("saved smoothed KF")
     
-    # print("🔹 Step 3: Segmenting and removing human from video...")
-    # process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
-    # convert_images_to_video(segmentation_out_dir)
+    print("🔹 Step 3: Segmenting and removing human from video...")
+    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
+    convert_images_to_video(segmentation_out_dir)
     
     print("🔹 Step 4: Rendering spheres and blending with background...")
     replace_sphere(hamer_out_dir, segmentation_out_dir, sphere_out_dir)
