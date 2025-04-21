@@ -39,42 +39,40 @@ Besides these files, you also need to download the MANO model. Please visit the 
 ```
 python pipeline.py 
 --video_path: YOUR_VIDEO_PATH
---background_img: PATH_TO_ENVIRONMENT_IMAGE
+--background_img: PATH_TO_ENVIRONMENT_IMAGE [If none, use the first frame of the video as the background]
 --handedness: [default to "left"]
 ```
-see output in the corresponding video folder.
-folder structure
-video.mp4
-- video_frames
-- video_hamer
-- video_segmented
-- video_final
+## 📁 Output Folder Structure
+After running the processing pipeline on a video (e.g., video.mp4), the following folder structure will be created in the same directory:
 
-# substeps
-# 1. preprocess video
+video.mp4
+├── video_frames/       # Extracted frames from the video
+├── video_hamer/        # 3D hand pose results (from HaMeR), includes meshes and pose JSON
+├── video_segmented/    # Segmented hands or objects from each frame
+├── video_final/        # Final visualizations with overlays (e.g., hand mesh, spheres, segmentation)
+
+## substeps
+### 1. preprocess video
 ```
 python hamer_detector/video_preprocessor.py
 ```
-# 2. hamer detection
+### 2. hamer detection
 ```
-python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense-test --out_folder hamer_detector/example_data/realsense-test-hamer --batch_size=48 --save_mesh
+python hamer_detector/demo.py \
+  --img_folder path/to/your/images \
+  --out_folder path/to/output_folder \
+  --batch_size=48 
+  --save_mesh 
 ```
 
-# 3. Human Segmentation
+### 3. Human Segmentation
 
 run segmentation to remove human from the scene. 
 ```
 python human_segmentor/human_pose_segmentor_mp_sam.py
 ```
-To turn image folder into videos, open terminal and run:
-```
-ls *_final.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
 
-
-ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4
-```
-
-# 4. Rendering with DiscoBall
+### 4. Rendering with DiscoBall
 ```
 python /human_segmentor/replace_hand_with_sphere.py
 --hamer_out_dir PATH_TO_THE_HAMER_PROCESSED_DATA
@@ -82,9 +80,10 @@ python /human_segmentor/replace_hand_with_sphere.py
 --sphere_out_dir OUTPUT_DIRECTORY
 ```
 
-# 5. side note: convert a folder of images into a video
+### 5. side note: convert a folder of images into a video
+To turn image folder into videos, open terminal and run:
 ```
-ls processed_results/*.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
+ls *.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
 
 
 ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4
