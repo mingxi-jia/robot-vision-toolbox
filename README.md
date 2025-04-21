@@ -30,17 +30,23 @@ Besides these files, you also need to download the MANO model. Please visit the 
 # change hamer camera parameter (VERY IMPORTANT)
 # in ./submodules/hamer/_DATA/hamer_ckpts/model_config.yaml
 [Line 59] FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
-
+```
 
 
 # Pipeline: detect hand and replace with disco ball
 ```
 python pipeline.py 
---video_path
+--video_path: YOUR_VIDEO_PATH
 --background_img: PATH_TO_ENVIRONMENT_IMAGE
 --handedness: [default to "left"]
 ```
-see output in corresponding video folder. 
+see output in the corresponding video folder.
+folder structure
+video.mp4
+- video_frames
+- video_hamer
+- video_segmented
+- video_final
 
 # substeps
 # 1. preprocess video
@@ -68,7 +74,10 @@ ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_
 
 # 4. Rendering with DiscoBall
 ```
-python hamer_detector/pipeline.py --video_path YOUR_VIDEO_PATH --handedness "right"
+python /human_segmentor/replace_hand_with_sphere.py
+--hamer_out_dir PATH_TO_THE_HAMER_PROCESSED_DATA
+--segmentation_out_dir PATH_TO_SEGMENTED_DATA
+--sphere_out_dir OUTPUT_DIRECTORY
 ```
 
 # 5. side note: convert a folder of images into a video
