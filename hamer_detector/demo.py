@@ -60,7 +60,7 @@ def detect_hand(args):
     img_paths = [img for end in args.file_type for img in Path(args.img_folder).glob(end)]
 
     all_centroids = dict()
-    
+    all_wrists = dict()
     # Iterate over all images in folder
     all_hand_results = {}
 
@@ -155,9 +155,6 @@ def detect_hand(args):
                                         mesh_base_color=LIGHT_BLUE,
                                         scene_bg_color=(1, 1, 1),
                                         )
-                reg_img_disp = (regression_img[:, :, ::-1] * 255).astype(np.uint8)
-                # cv2.imshow("Regression Image", reg_img_disp)
-                # cv2.waitKey(0)
 
                 if args.side_view:
                     side_img = renderer(out['pred_vertices'][n].detach().cpu().numpy(),
@@ -166,19 +163,11 @@ def detect_hand(args):
                                             mesh_base_color=LIGHT_BLUE,
                                             scene_bg_color=(1, 1, 1),
                                             side_view=True)
-                    # side_img_disp = (side_img[:, :, ::-1] * 255).astype(np.uint8)
-                    # cv2.imshow("Side View", side_img_disp)
-                    # cv2.waitKey(0)
+                    
                     final_img = np.concatenate([input_patch, regression_img, side_img], axis=1)
                 else:
                     final_img = np.concatenate([input_patch, regression_img], axis=1)
 
-
-                # final_img_disp = (final_img[:, :, ::-1] * 255).astype(np.uint8)
-                # cv2.imshow("Final View (concatenated)", final_img_disp)
-                # cv2.waitKey(0)
-
-                # cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{person_id}.png'), 255*final_img[:, :, ::-1])
                 hand_side = "right" if batch['right'][n].item() == 1 else "left"
 
                 cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_{hand_side}.png'), 255*final_img[:, :, ::-1])
@@ -213,9 +202,10 @@ def detect_hand(args):
                     tmesh.export(os.path.join(args.out_folder, f'{img_fn}_{hand_side}.obj'))
                     
                     centroids = np.array(tmesh.vertices).mean(0).tolist()
-                    # all_centroids[f'{img_fn}'] = centroids
                     all_centroids[f'{img_fn}_{hand_side}'] = centroids
 
+                    wrists = np.array(tmesh.vertices[0]).tolist()
+                    all_wrists[f'{img_fn}_{hand_side}'] = wrists
             
         # Render front view
         if args.full_frame and len(all_verts) > 0:
@@ -224,7 +214,6 @@ def detect_hand(args):
                 scene_bg_color=(1, 1, 1),
                 focal_length=scaled_focal_length,
             )
-            print(f"----------Scaled focal length{scaled_focal_length}--------------------")
             cam_view = renderer.render_rgba_multiple(all_verts, cam_t=all_cam_t, render_res=img_size[n], is_right=all_right, **misc_args)
             # Save binary mask of rendered hand (from alpha channel)
             hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
@@ -249,6 +238,8 @@ def detect_hand(args):
     # Save hand centroids to disk
     with open(os.path.join(args.out_folder, f'centroids.yml'), 'w') as f:
         json.dump(all_centroids, f)
+    with open(os.path.join(args.out_folder, f'wrists.yml'), 'w') as f:
+        json.dump(all_wrists, f)
     
     with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
         json.dump(all_hand_results, f, indent=2)

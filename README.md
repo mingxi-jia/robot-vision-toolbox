@@ -13,6 +13,9 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 git clone https://github.com/Gy920/segment-anything-2-real-time.git ./submodules/segment-anything-2-real-time
 cd segment-anything-2-real-time && pip install -e .
 export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH
+# install other necessary packages:
+pip install mediapipe
+pip install pykalman
 ```
 
 # 2. hamer hand detector
@@ -22,7 +25,6 @@ git clone --recursive https://github.com/geopavlakos/hamer.git ./submodules/hame
 cd ./submodules/hamer
 pip install -e .[all]
 pip install -v -e third-party/ViTPose
-pip install mediapipe
 bash fetch_demo_data.sh
 ```
 Besides these files, you also need to download the MANO model. Please visit the MANO website and register to get access to the downloads section. We only require the right hand model. [MANO_RIGHT.pkl](https://mano.is.tue.mpg.de/) under the _DATA/data/mano folder.

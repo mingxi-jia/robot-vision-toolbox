@@ -129,70 +129,15 @@ def visualize_segmentation_debug(original, skeleton=None, mediapipe_mask=None, r
                 fx = next_pts[:, 0] - prev_pts[:, 0]
                 fy = next_pts[:, 1] - prev_pts[:, 1]
                 plt.quiver(prev_pts[:, 0], prev_pts[:, 1], fx, fy, color='r', angles='xy', scale_units='xy', scale=1)
-        elif img.ndim == 2:
-            plt.imshow(img, cmap="gray")
-        else:
-            plt.imshow(img)
+
         plt.title(title)
         plt.axis("off")
 
     plt.tight_layout()
     if save_path:
         plt.savefig(save_path + title_suffix + ".png", dpi=150)
-    plt.close()
 
 
-
-# def extract_segmentation_points(image_path, num_points=10):
-#     """
-#     Extracts human pose keypoints and segmentation mask from an image using MediaPipe.
-#     Applies Gaussian blur to smooth the edges of the segmentation mask.
-#     """
-#     if isinstance(image_path, str):
-#         image = cv2.imread(image_path)
-#     else:
-#         image = image_path
-#     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-#     results = pose.process(image_rgb)
-
-#     if not results.pose_landmarks or results.segmentation_mask is None:
-#         # print(f"No valid segmentation found for {image_path}.")
-#         return None, None, None, None
-#     # drop frame if left or right wrist visibility is lower than a threshold:
-#     # thre = 0.3
-#     # left_wrist_visibility =  results.pose_landmarks.landmark[18].visibility
-#     # right_wrist_visibility =  results.pose_landmarks.landmark[15].visibility
-    
-#     # if right_wrist_visibility< thre and left_wrist_visibility < thre:
-#     #     print("Did not detect wrist:", left_wrist_visibility, right_wrist_visibility)
-#     #     return None, None, None, None
-#     # print(results.pose_landmarks.landmark[15].visibility)
-#     height, width, _ = image.shape
-#     segmentation_mask = (results.segmentation_mask > 0.5).astype(np.uint8)
-
-#     # Get all foreground pixel locations
-#     mask_indices = np.column_stack(np.where(segmentation_mask == 1))  # (row, col)
-
-#     if len(mask_indices) == 0:
-#         print(f"No valid segmentation points found for {image_path}.")
-#         return None, None, None, None
-
-#     # Sort points to ensure even spacing
-#     mask_indices = mask_indices[np.lexsort((mask_indices[:, 1], mask_indices[:, 0]))]  # Sort by (y, x)
-
-#     # Evenly sample points from the sorted indices
-#     step = max(1, len(mask_indices) // num_points)  # Step size to evenly pick points
-#     sampled_indices = mask_indices[::step][:num_points]  # Take every `step`th point
-
-#     sampled_points = np.flip(sampled_indices, axis=1).copy()  # Convert (row, col) to (x, y) and fix negative strides
-
-#     # Draw the skeleton on the image
-#     annotated_image = image.copy()
-#     mp_drawing.draw_landmarks(
-#         annotated_image,
-#         results.pose_landmarks,
-#         mp_pose.POSE_CONNECTIONS,
-#         landmark_drawing_spec=mp_drawing_styles.get_default_pose_landmarks_style())
 
 #     return image, sampled_points, annotated_image, segmentation_mask
 def extract_segmentation_points(image_path, num_points=10):
@@ -225,13 +170,6 @@ def extract_segmentation_points(image_path, num_points=10):
         largest_mask[labels == largest_label] = 1
     else:
         largest_mask = raw_mask
-
-    # 🖼️ Show segmentation mask
-    # plt.figure(figsize=(6, 6))
-    # plt.imshow(largest_mask, cmap="gray")
-    # plt.title("MediaPipe Largest Segment")
-    # plt.axis("off")
-    # plt.show()
 
     # ✋ Use pose landmarks as segmentation points from upper body landmarks
     upper_body_indices = [0, 11, 12, 13, 14, 15, 16, 23, 24]  # nose, shoulders, elbows, wrists, clavicle
@@ -275,7 +213,7 @@ def extract_segmentation_points(image_path, num_points=10):
     sampled_points = np.array(sampled_points)
 
 
-    # 🎯 Draw skeleton overlay
+    # Draw skeleton overlay
     annotated_image = image.copy()
     mp_drawing.draw_landmarks(
         annotated_image,
@@ -349,49 +287,6 @@ def replace_background(image, mask, reference_image):
 
     return result_image
 
-# def process_image(image_path, output_mask_path, reference_path=None, output_final_path=None):
-#     """
-#     Full pipeline: Extracts segmentation points, displays skeleton, refines segmentation with SAM2,
-#     and optionally replaces the background using a reference image.
-#     """
-#     image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(image_path)
-#     if sampled_points is None:
-#         return
-
-#     # Segment using SAM2
-#     refined_mask = segment_human(image, sampled_points)
-
-#     # Compare areas and fallback to MediaPipe mask if SAM2 is too small
-#     sam_area = np.sum(refined_mask)
-#     mp_area = np.sum(mediapipe_mask)
-#     if sam_area < 0.75 * mp_area:
-#         print("⚠️ Replacing SAM2 mask with MediaPipe mask (too small)")
-#         refined_mask = mediapipe_mask
-
-#     # Save segmentation mask
-#     mask_image = Image.fromarray((refined_mask * 255).astype(np.uint8))
-#     mask_image.save(output_mask_path)
-
-#     final_result = None
-#     if reference_path and output_final_path:
-#         # Load reference background image
-#         reference_image = cv2.imread(reference_path)
-
-#         # Replace background
-#         final_result = replace_background(image, refined_mask, reference_image)
-
-#         # Save final composited image
-#         cv2.imwrite(output_final_path, final_result)
-
-#     # Debug visualization
-#     visualize_segmentation_debug(
-#         original=image,
-#         skeleton=annotated_image,
-#         mediapipe_mask=mediapipe_mask,
-#         refined_mask=refined_mask,
-#         final=final_result,
-#         title_suffix=f"(Image)"
-#     )
 def process_video(video_path, output_folder, background_path=None, hand_mask_folder = None, handedness = 'left'):
     """
     Processes a video frame by frame using MediaPipe + SAM2 segmentation,
@@ -564,12 +459,6 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
     prev_frame = None
     prev_mask = None
     prev_landmarks = None
-
-    # hand_mask_path = os.path.join(hand_mask_folder, f"frame_{frame_count:06d}_{handedness}_hand_mask.png")
-    # hand_mask = cv2.imread(hand_mask_path, cv2.IMREAD_GRAYSCALE)
-    # if hand_mask is not None:
-    #     hand_mask = (hand_mask > 127).astype(np.uint8)
-
 
     for idx, image_path in enumerate(image_paths):
         frame = cv2.imread(image_path)

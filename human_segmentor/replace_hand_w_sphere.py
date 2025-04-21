@@ -121,12 +121,13 @@ def replace_sphere(mesh_folder, image_folder, output_folder):
     import yaml
     
     # Load hand mesh info
-    json_path = os.path.join(mesh_folder, "hand_pose_camera_info.json")
+    json_path = os.path.join(mesh_folder, "hand_pose_camera_info_smoothed.json")
     with open(json_path, "r") as f:
         hand_data = json.load(f)
     
     # Load camera centroids
-    centroids_path = os.path.join(mesh_folder, "centroids.yml")
+    # centroids_path = os.path.join(mesh_folder, "centroids.yml")
+    centroids_path = os.path.join(mesh_folder, "centroids_smoothed.yml")
     with open(centroids_path, "r") as f:
         centroids = yaml.safe_load(f)
     

@@ -1,4 +1,5 @@
 import subprocess
+import cv2
 def convert_images_to_video(image_folder: str, framerate: int = 24):
     """
     Converts a folder of images into a video using ffmpeg.
@@ -42,3 +43,14 @@ def convert_images_to_video(image_folder: str, framerate: int = 24):
     os.chdir(cwd)
     print(f"✅ Saved video to {output_path}")
 
+def get_first_frame(video_path, output_path):
+    cap = cv2.VideoCapture(video_path)
+    ret, frame = cap.read()
+
+    if ret:
+        cv2.imwrite(output_path, frame)
+        print(f"✅ First frame saved to {output_path}")
+    else:
+        print("❌ Failed to read video or grab first frame.")
+
+    cap.release()
