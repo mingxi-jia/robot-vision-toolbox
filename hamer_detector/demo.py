@@ -18,7 +18,7 @@ from vitpose_model import ViTPoseModel
 import json
 from typing import Dict, Optional
 
-def main(args):
+def detect_hand(args):
     # Download and load checkpoints
     download_models(CACHE_DIR_HAMER)
     model, model_cfg = load_hamer(args.checkpoint)
@@ -199,6 +199,7 @@ def main(args):
                     "pred_cam_t": cam_t.tolist(),
                     "global_orient": global_orient,
                     "is_right": bool(is_right),
+                    "scaled_focal_length": float(scaled_focal_length),
                 }
 
                 all_verts.append(verts)
@@ -266,4 +267,4 @@ if __name__ == '__main__':
     parser.add_argument('--body_detector', type=str, default='vitdet', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
     args = parser.parse_args()
-    main(args)
+    detect_hand(args)

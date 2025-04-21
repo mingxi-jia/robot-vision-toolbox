@@ -4,6 +4,8 @@ raw_data
 *.jpg
 *.obj
 *.mp4
+*.json
+*.yml
 submodules/segment-anything-2-real-time/
 submodules/hamer/
 hamer_detector/example_data/
@@ -15,4 +17,9 @@ _DATA/hamer_ckpts/checkpoints/hamer.ckpt
 _DATA/data/mano_mean_params.npz
 _DATA/data/mano/MANO_RIGHT.pkl
 third-party/ViTPose
+hamer_detector/final_output/images.txt
+hamer_detector/final_output/list.txt
+hamer_detector/segmentation_output/list.txt
+hamer_detector/sphere_overlay/images.txt
+hamer_detector/tmp_imgs/list.txt
 list.txt

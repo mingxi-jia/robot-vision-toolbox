@@ -22,6 +22,7 @@ git clone --recursive https://github.com/geopavlakos/hamer.git ./submodules/hame
 cd ./submodules/hamer
 pip install -e .[all]
 pip install -v -e third-party/ViTPose
+pip install mediapipe
 bash fetch_demo_data.sh
 ```
 Besides these files, you also need to download the MANO model. Please visit the MANO website and register to get access to the downloads section. We only require the right hand model. [MANO_RIGHT.pkl](https://mano.is.tue.mpg.de/) under the _DATA/data/mano folder.
@@ -30,21 +31,29 @@ Besides these files, you also need to download the MANO model. Please visit the 
 # in ./submodules/hamer/_DATA/hamer_ckpts/model_config.yaml
 [Line 59] FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
 
-# preprocess video
+
+
+# Pipeline: detect hand and replace with disco ball
+```
+python pipeline.py 
+--video_path
+--background_img: PATH_TO_ENVIRONMENT_IMAGE
+--handedness: [default to "left"]
+```
+see output in corresponding video folder. 
+
+# substeps
+# 1. preprocess video
+```
 python hamer_detector/video_preprocessor.py
-
-# hamer detection
-[NOTE(not affecting running): iopath imcompactable, detectron requireing iopath<0.1.10, not compatable with SAM2's installation requirement of iopath>0.1.10]
+```
+# 2. hamer detection
+```
 python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense-test --out_folder hamer_detector/example_data/realsense-test-hamer --batch_size=48 --save_mesh
-
-# render sphere based on hamer results
-python hamer_detector/sphere_renderer.py
 ```
 
 # 3. Human Segmentation
-```
-pip install mediapipe
-```
+
 run segmentation to remove human from the scene. 
 ```
 python human_segmentor/human_pose_segmentor_mp_sam.py
