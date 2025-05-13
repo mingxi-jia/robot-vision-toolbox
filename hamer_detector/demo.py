@@ -14,7 +14,7 @@ from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_S
 from hamer.utils.renderer import Renderer, cam_crop_to_full
 from hamer_detector.icp_conversion import extract_hand_point_cloud, compute_aligned_hamer_translation
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
-
+import time
 from vitpose_model import ViTPoseModel
 
 import json
@@ -140,17 +140,27 @@ def detect_hand(args):
 
         # Run reconstruction on all detected hands
         dataset = ViTDetDataset(model_cfg, img_cv2, boxes, right, rescale_factor=args.rescale_factor)
-        dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
-
+        dataloader = torch.utils.data.DataLoader(
+                        dataset,
+                        batch_size=args.batch_size,
+                        shuffle=False,
+                        num_workers=2,           # Reduce from 4
+                        pin_memory=True,         # ✅ Faster host-to-GPU transfer
+                        prefetch_factor=2,       # ✅ Preloads batches
+                        persistent_workers=True  # ✅ Keeps worker processes alive
+                    )
         all_verts = []
         all_cam_t = []
         all_right = []
         
         
         for batch in dataloader:
+            start_time = time.time()
             batch = recursive_to(batch, device)
             with torch.no_grad():
-                out = model(batch)
+                with torch.cuda.amp.autocast():
+                    out = model(batch)
+            print(f"⏱️ Inference time per batch: {time.time() - start_time:.3f} s")
 
             multiplier = (2*batch['right']-1)
             pred_cam = out['pred_cam']

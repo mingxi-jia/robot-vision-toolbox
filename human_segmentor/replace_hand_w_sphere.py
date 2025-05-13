@@ -80,16 +80,11 @@ def render_rgba_multiple(
         render_res=[256, 256],
         focal_length=None,
         is_right=False,
+        renderer=None,
     ):
 
-    renderer = pyrender.OffscreenRenderer(viewport_width=render_res[0],
-                                            viewport_height=render_res[1],
-                                            point_size=1.0)
+    # renderer is now passed in from outside and reused
 
-    # if is_right is not None and not is_right:
-    #     # flip rotation for left hand
-    #     rot_matrix[:, 0] *= -1
-    
     transformed_mesh = transform_mesh(mesh, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
 
     scene = pyrender.Scene(bg_color=[*scene_bg_color, 0.0],
@@ -162,77 +157,63 @@ def render_rgba_multiple(
     
     color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
     color = color.astype(np.float32) / 255.0
-    renderer.delete()
+    scene.clear()
 
     return color
 
 
 def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path):
-    import yaml
-    
+    import json
+    from multiprocessing import Pool
+    os.makedirs(output_folder, exist_ok=True)
+    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_final.png")])
+
     # Load hand mesh info
-    # json_path = os.path.join(mesh_folder, "hand_pose_camera_info.json")
-    json_path = os.path.join(mesh_folder, "hand_pose_camera_info_smoothed.json")
-    with open(json_path, "r") as f:
+    with open(os.path.join(mesh_folder, "hand_pose_camera_info_smoothed.json"), "r") as f:
         hand_data = json.load(f)
-    
-    # Load camera centroids
-    # centroids_path = os.path.join(mesh_folder, "centroids.yml")
-    # centroids_path = os.path.join(mesh_folder, "centroids_smoothed.yml")
-    # with open(centroids_path, "r") as f:
-    #     centroids = yaml.safe_load(f)
-    
-    # intrinsics_path = args.intrinsics_path if hasattr(args, "intrinsics_path") else None
+
+    # Load camera intrinsics
     if os.path.exists(intrinsics_path):
         with open(intrinsics_path, "r") as f:
             camera_intrinsics = json.load(f)
     else:
         camera_intrinsics = None
 
-    os.makedirs(output_folder, exist_ok=True)
-    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_final.png")])
+    renderer = pyrender.OffscreenRenderer(viewport_width=640, viewport_height=360, point_size=1.0)
+    tasks = [(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer) for fname in image_files]
 
-    for fname in image_files:
-        frame_id = os.path.splitext(fname)[0].split('_')[1]  # assumes filename like '000123_final.png'
-        print(f'processing frame-> {frame_id}')
-        img_path = os.path.join(image_folder, fname)
-        img = np.asarray(Image.open(img_path).convert("RGB"))  # float32 in [0,1]
-        height, width, _ = img.shape
-        mesh = add_sphere()
-
-        # Find matching hand_data key
-        matched_key = None
-        for key in hand_data:
-            if frame_id in key:
-                matched_key = key
-                break
-
-        if matched_key is None:
-            print(f"Skipping frame {frame_id} hand data not found)")
-            continue
-        
-        # cam_t = np.array(centroids[frame_id])  # translation vector
-        cam_t = np.array(hand_data[matched_key]["pred_cam_t"])
+    for args in tasks:
+        process_frame(*args)
+    renderer.delete()
 
 
-        misc_args = dict(
-            mesh_base_color=LIGHT_BLUE,
-            scene_bg_color=(1, 1, 1),
-        )
+def process_frame(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer):
+    frame_id = os.path.splitext(fname)[0].split('_')[1]
+    img_path = os.path.join(image_folder, fname)
+    img = np.asarray(Image.open(img_path).convert("RGB"))
+    height, width, _ = img.shape
+    mesh = add_sphere()
 
-        # Apply reorientation to global_orient
-        rot_mat = np.array(hand_data[matched_key]['global_orient'][0])
+    matched_key = next((key for key in hand_data if frame_id in key), None)
+    if matched_key is None:
+        # print(f"Skipping frame {frame_id} hand data not found)")
+        return
 
-        # rot_mat_converted = rot_mat
-        focal_param = camera_intrinsics 
-        rendered_img = render_rgba_multiple(mesh, cam_t, focal_param, rot_matrix = rot_mat, render_res = [width, height], focal_length=focal_param, **misc_args)
+    cam_t = np.array(hand_data[matched_key]["pred_cam_t"])
+    rot_mat = np.array(hand_data[matched_key]['global_orient'][0])
 
-        input_img = img.astype(np.float32)[:,:,::-1]/255.0
-        input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
-        input_img_overlay = input_img[:,:,:3] * (1-rendered_img[:,:,3:]) + rendered_img[:,:,:3] * rendered_img[:,:,3:]
-        rgb_img = 255*input_img_overlay[:, :, ::-1]
-        cv2.imwrite(os.path.join(output_folder, f'{frame_id}_final.jpg'), cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
-        
+    misc_args = dict(
+        mesh_base_color=LIGHT_BLUE,
+        scene_bg_color=(1, 1, 1),
+    )
+
+    rendered_img = render_rgba_multiple(mesh, cam_t, camera_intrinsics, rot_matrix=rot_mat, render_res=[width, height], focal_length=camera_intrinsics, **misc_args, renderer=renderer)
+    input_img = img.astype(np.float32)[:, :, ::-1] / 255.0
+    input_img = np.concatenate([input_img, np.ones_like(input_img[:, :, :1])], axis=2)
+    input_img_overlay = input_img[:, :, :3] * (1 - rendered_img[:, :, 3:]) + rendered_img[:, :, :3] * rendered_img[:, :, 3:]
+    rgb_img = 255 * input_img_overlay[:, :, ::-1]
+    cv2.imwrite(os.path.join(output_folder, f'{frame_id}_final.jpg'), cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
+
 if __name__ == "__main__":
 
     mesh_folder = "/home/xhe71/Desktop/robotool_data/Color_hamer"
