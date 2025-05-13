@@ -23,6 +23,8 @@ def convert_images_to_video(image_folder: str, framerate: int = 24):
     with open(list_path, "w") as f:
         for img in image_files:
             f.write(f"file '{img}'\n")
+            f.write(f"duration {1.0 / framerate:.4f}\n")
+        f.write(f"file '{image_files[-1]}'\n")  # repeat last file without durations
 
     output_path = os.path.join(image_folder, "output.mp4")
     cmd = [
@@ -31,7 +33,6 @@ def convert_images_to_video(image_folder: str, framerate: int = 24):
         "-f", "concat",
         "-safe", "0",
         "-i", "images.txt",
-        "-vf", f"fps={framerate}",
         "-pix_fmt", "yuv420p",
         "output.mp4"
     ]

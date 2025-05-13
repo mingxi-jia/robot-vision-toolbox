@@ -1,8 +1,3 @@
-# cam_intrinsic = np.array([
-#     [387.12786865234375, 0.0,               321.97259521484375], 
-#     [0.0,                386.7669677734375, 243.21249389648438], 
-#     [0.0,                0.0,               1.0]
-# ])
 import os
 import sys
 
@@ -39,19 +34,26 @@ def add_sphere(r = 0.06):
     # 4. Assign UVs and texture
     sphere.visual = trimesh.visual.TextureVisuals(uv=uv)
     sphere.visual.material.image = texture_np
+    sphere.metadata["type"] = "sphere"
     return sphere
 
 
 def transform_mesh(mesh, translation, rotation_matrix = None, rot_axis=[1, 0, 0], rot_angle=0):
     if rotation_matrix is not None:
         rot4x4 = np.eye(4)
-        rot4x4[:3, :3] = rotation_matrix
+        if len(rotation_matrix) > 0:
+            rot4x4[:3, :3] = rotation_matrix
+
+        # If mesh is a sphere, rotate it to match HaMeR hand orientation
+        if mesh.metadata.get("type") == "sphere":
+            align = trimesh.transformations.rotation_matrix(np.radians(90), [1, 0, 0])
+            mesh.apply_transform(align)
 
         mesh.apply_transform(rot4x4)
 
-    # Optional additional rotation
-    rot = trimesh.transformations.rotation_matrix(np.radians(rot_angle), rot_axis)
-    mesh.apply_transform(rot)
+    # # Optional additional rotation
+    # rot = trimesh.transformations.rotation_matrix(np.radians(rot_angle), rot_axis)
+    # mesh.apply_transform(rot)
 
     # Flip upside down (180 degrees around X-axis)
     # flip_matrix = trimesh.transformations.rotation_matrix(
@@ -69,6 +71,7 @@ def transform_mesh(mesh, translation, rotation_matrix = None, rot_axis=[1, 0, 0]
 def render_rgba_multiple(
         mesh,
         cam_t,
+        camera_intrinsics, 
         rot_matrix = None,
         rot_axis=[1,0,0],
         rot_angle=0,
@@ -83,32 +86,79 @@ def render_rgba_multiple(
                                             viewport_height=render_res[1],
                                             point_size=1.0)
 
-    if is_right is not None and not is_right:
-        # flip rotation for left hand
-        rot_matrix[:, 0] *= -1
+    # if is_right is not None and not is_right:
+    #     # flip rotation for left hand
+    #     rot_matrix[:, 0] *= -1
     
     transformed_mesh = transform_mesh(mesh, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
 
     scene = pyrender.Scene(bg_color=[*scene_bg_color, 0.0],
-                            ambient_light=(0.3, 0.3, 0.3))
+                            ambient_light=(0.4, 0.3, 0.3))
     pyrender_mesh = pyrender.Mesh.from_trimesh(transformed_mesh, smooth=False)
     scene.add(pyrender_mesh)
 
     camera_pose = np.eye(4)
+    camera_pose[:3, :3] = np.array([
+        [1,  0,  0],
+        [ 0,  -1,  0],
+        [ 0,  0, -1]
+    ])  # 180-degree rotation around Y axis
     
-    camera_center = [render_res[0] / 2., render_res[1] / 2.]
-    camera = pyrender.IntrinsicsCamera(fx=focal_length, fy=focal_length,
-                                        cx=camera_center[0], cy=camera_center[1], zfar=1e12)
+    # camera_center = [render_res[0] / 2., render_res[1] / 2.]
+    
+    # if isinstance(focal_length, dict):
+    #     fx = focal_length.get("fx", 1.0)
+    #     fy = focal_length.get("fy", 1.0)
+    #     cx = focal_length.get("cx", camera_center[0])
+    #     cy = focal_length.get("cy", camera_center[1])
+    # else:
+    #     fx = fy = focal_length
+    #     cx = camera_center[0]
+    #     cy = camera_center[1]
+    
+    cx = camera_intrinsics['cx']
+    cy = camera_intrinsics['cy']
+    fx = camera_intrinsics['fx']
+    fy = camera_intrinsics['fy']
+    camera = pyrender.IntrinsicsCamera(fx=fx, fy=fy,
+                                        cx=cx, cy=cy, zfar=1e12)
 
     # Create camera node and add it to pyRender scene
     camera_node = pyrender.Node(camera=camera, matrix=camera_pose)
     scene.add_node(camera_node)
     # add light
     
-    light_nodes = create_raymond_lights()
-    for node in light_nodes:
-        node.light.intensity = 3.0
-        scene.add_node(node)
+    # Add directional light at camera pose
+    light = pyrender.DirectionalLight(color=np.ones(3), intensity=10.0)
+    light_node = pyrender.Node(light=light, matrix=camera_pose)
+    scene.add_node(light_node)
+    
+    # Add orientation arrows for Z (red) and X (green) axes in local frame
+    from trimesh.creation import cylinder, cone
+
+    def make_axis_arrow(color_rgb, direction='z'):
+        arrow_length = 0.15
+        arrow_radius = 0.01
+        base = cylinder(radius=arrow_radius, height=arrow_length, sections=12)
+        tip = cone(radius=arrow_radius * 2, height=arrow_length * 0.3, sections=12)
+        tip.apply_translation([0, 0, arrow_length])
+        arrow = base + tip
+        arrow.visual.vertex_colors = np.tile(np.array(color_rgb) * 255, (arrow.vertices.shape[0], 1))
+        if direction == 'x':
+            rot = trimesh.transformations.rotation_matrix(np.radians(-90), [0, 1, 0])
+            arrow.apply_transform(rot)
+        elif direction == 'y':
+            rot = trimesh.transformations.rotation_matrix(np.radians(90), [1, 0, 0])
+            arrow.apply_transform(rot)
+        return arrow
+
+    z_arrow = make_axis_arrow((1, 0, 0), 'z')    # Red Z
+    x_arrow = make_axis_arrow((0, 1, 0), 'x')    # Green X
+    y_arrow = make_axis_arrow((0, 0.6, 1), 'y')  # Blue Y
+    for arr in [z_arrow, x_arrow, y_arrow]:
+        arr = transform_mesh(arr, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
+        arrow_mesh = pyrender.Mesh.from_trimesh(arr, smooth=False)
+        scene.add(arrow_mesh)
     
     color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
     color = color.astype(np.float32) / 255.0
@@ -117,26 +167,28 @@ def render_rgba_multiple(
     return color
 
 
-def replace_sphere(mesh_folder, image_folder, output_folder):
+def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path):
     import yaml
     
     # Load hand mesh info
+    # json_path = os.path.join(mesh_folder, "hand_pose_camera_info.json")
     json_path = os.path.join(mesh_folder, "hand_pose_camera_info_smoothed.json")
     with open(json_path, "r") as f:
         hand_data = json.load(f)
     
     # Load camera centroids
     # centroids_path = os.path.join(mesh_folder, "centroids.yml")
-    centroids_path = os.path.join(mesh_folder, "centroids_smoothed.yml")
-    with open(centroids_path, "r") as f:
-        centroids = yaml.safe_load(f)
+    # centroids_path = os.path.join(mesh_folder, "centroids_smoothed.yml")
+    # with open(centroids_path, "r") as f:
+    #     centroids = yaml.safe_load(f)
     
-    cam_intrinsic = np.array([
-        [387.12786865234375, 0.0,               321.97259521484375], 
-        [0.0,                386.7669677734375, 243.21249389648438], 
-        [0.0,                0.0,               1.0]
-    ])
-    
+    # intrinsics_path = args.intrinsics_path if hasattr(args, "intrinsics_path") else None
+    if os.path.exists(intrinsics_path):
+        with open(intrinsics_path, "r") as f:
+            camera_intrinsics = json.load(f)
+    else:
+        camera_intrinsics = None
+
     os.makedirs(output_folder, exist_ok=True)
     image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_final.png")])
 
@@ -145,18 +197,23 @@ def replace_sphere(mesh_folder, image_folder, output_folder):
         print(f'processing frame-> {frame_id}')
         img_path = os.path.join(image_folder, fname)
         img = np.asarray(Image.open(img_path).convert("RGB"))  # float32 in [0,1]
-        frame_id = 'frame_'+frame_id+'_left'
-        mesh = add_sphere(r = 0.06)
-        frame_id_right = 'frame_'+frame_id+'_right'
-        if frame_id not in hand_data or frame_id not in centroids:
-            if frame_id_right in hand_data:
-                frame_id =frame_id_right
-            else:
-                print(f"Skipping {frame_id} (missing data)")
-                continue
+        height, width, _ = img.shape
+        mesh = add_sphere()
+
+        # Find matching hand_data key
+        matched_key = None
+        for key in hand_data:
+            if frame_id in key:
+                matched_key = key
+                break
+
+        if matched_key is None:
+            print(f"Skipping frame {frame_id} hand data not found)")
+            continue
         
-        cam_t = np.array(centroids[frame_id])  # translation vector
-        scaled_focal_length = hand_data[frame_id]['scaled_focal_length']
+        # cam_t = np.array(centroids[frame_id])  # translation vector
+        cam_t = np.array(hand_data[matched_key]["pred_cam_t"])
+
 
         misc_args = dict(
             mesh_base_color=LIGHT_BLUE,
@@ -164,9 +221,11 @@ def replace_sphere(mesh_folder, image_folder, output_folder):
         )
 
         # Apply reorientation to global_orient
-        rot_mat = np.array(hand_data[frame_id]['global_orient'][0])
+        rot_mat = np.array(hand_data[matched_key]['global_orient'][0])
+
         # rot_mat_converted = rot_mat
-        rendered_img = render_rgba_multiple(mesh, cam_t, rot_matrix = rot_mat, render_res = [640, 480], is_right=False, focal_length=scaled_focal_length, **misc_args)
+        focal_param = camera_intrinsics 
+        rendered_img = render_rgba_multiple(mesh, cam_t, focal_param, rot_matrix = rot_mat, render_res = [width, height], focal_length=focal_param, **misc_args)
 
         input_img = img.astype(np.float32)[:,:,::-1]/255.0
         input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
@@ -174,14 +233,10 @@ def replace_sphere(mesh_folder, image_folder, output_folder):
         rgb_img = 255*input_img_overlay[:, :, ::-1]
         cv2.imwrite(os.path.join(output_folder, f'{frame_id}_final.jpg'), cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
         
-        
-    convert_images_to_video(output_folder)
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Overlay wrist-centered spheres onto images using .obj hand meshes.")
-    parser.add_argument("--mesh_folder", type=str, default = "hamer_detector/hamer_output", help="Path to folder containing .obj files")
-    parser.add_argument("--image_folder", type=str, default="hamer_detector/segmentation_output", help="Path to folder containing *_final.png images")
-    parser.add_argument("--output_folder", type=str, default="hamer_detector/sphere_overlay", help="Folder to save blended results")
-    args = parser.parse_args()
-    replace_sphere(args.mesh_folder, args.image_folder, args.output_folder)
 
-
+    mesh_folder = "/home/xhe71/Desktop/robotool_data/Color_hamer"
+    image_folder = "/home/xhe71/Desktop/robotool_data/Color_segmented"
+    output_folder = "/home/xhe71/Desktop/robotool_data/Color_final"
+    intrinsic_path = "/home/xhe71/Desktop/robotool_data/camera_intrinsics.json"
+    replace_sphere(mesh_folder, image_folder, output_folder, intrinsic_path)

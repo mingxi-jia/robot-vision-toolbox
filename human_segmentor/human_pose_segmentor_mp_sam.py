@@ -5,6 +5,7 @@ import torch
 import mediapipe as mp
 import matplotlib.pyplot as plt
 from PIL import Image
+import torch
 
 # Import SAM2 from your specified relative path
 import sys
@@ -18,14 +19,14 @@ mp_pose = mp.solutions.pose
 mp_drawing = mp.solutions.drawing_utils
 mp_drawing_styles = mp.solutions.drawing_styles
 pose_video = mp_pose.Pose(static_image_mode=False, model_complexity=2, enable_segmentation=True,
-                           min_detection_confidence=0.3, min_tracking_confidence=0.3)
+                           min_detection_confidence=0.1, min_tracking_confidence=0.3)
 pose_static = mp_pose.Pose(static_image_mode=True, model_complexity=2, enable_segmentation=True,
-                            min_detection_confidence=0.3, min_tracking_confidence=0.3)
+                            min_detection_confidence=0.1, min_tracking_confidence=0.1)
 
 # Load SAM2 Model
 checkpoint = "submodules/segment-anything-2-real-time/checkpoints/sam2.1_hiera_large.pt"
 model_cfg = "configs/sam2.1/sam2.1_hiera_l.yaml"
-sam_predictor = SAM2ImagePredictor(build_sam2(model_cfg, checkpoint))
+sam_predictor = SAM2ImagePredictor(build_sam2(model_cfg, checkpoint).to("cuda"))
 
 def expand_mask(mask, kernel_size=5, iterations=1):
     """
@@ -77,65 +78,6 @@ def warp_mask_with_optical_flow(prev_frame, current_frame, prev_mask):
     warped_mask = (warped_mask > 0.5).astype(np.uint8)
 
     return warped_mask, flow
-
-def visualize_segmentation_debug(original, skeleton=None, mediapipe_mask=None, refined_mask=None, final=None,
-                                  fallback_mask=None, flow=None, title_suffix="", save_path=None):
-    """
-    Displays segmentation and processing steps across 2 rows for debugging.
-    Adds optical flow quiver plot using tracked pose landmarks.
-    """
-    visuals = []
-    titles = []
-
-    visuals.append(cv2.cvtColor(original, cv2.COLOR_BGR2RGB))
-    titles.append(f"Original Frame {title_suffix}")
-
-    if skeleton is not None:
-        visuals.append(cv2.cvtColor(skeleton, cv2.COLOR_BGR2RGB))
-        titles.append("Pose Skeleton")
-
-    if mediapipe_mask is not None:
-        visuals.append(mediapipe_mask)
-        titles.append("MediaPipe Mask")
-
-    if refined_mask is not None:
-        visuals.append(refined_mask)
-        titles.append("SAM2 Refined Mask")
-
-    if fallback_mask is not None:
-        visuals.append(fallback_mask)
-        titles.append("Final Used Mask")
-
-    if final is not None:
-        visuals.append(cv2.cvtColor(final, cv2.COLOR_BGR2RGB))
-        titles.append("Final Composite")
-
-    if flow is not None:
-        visuals.append("FLOW_PLOT")  # special marker
-        titles.append("Landmark Optical Flow")
-
-    total = len(visuals)
-    cols = (total + 1) // 2
-    rows = 2
-    plt.figure(figsize=(4 * cols, 6))
-
-    for idx, (img, title) in enumerate(zip(visuals, titles)):
-        plt.subplot(rows, cols, idx + 1)
-        if isinstance(img, str) and img == "FLOW_PLOT":
-            gray = cv2.cvtColor(original, cv2.COLOR_BGR2GRAY)
-            plt.imshow(gray, cmap="gray")
-            if flow is not None and isinstance(flow, tuple) and len(flow) == 2:
-                prev_pts, next_pts = flow
-                fx = next_pts[:, 0] - prev_pts[:, 0]
-                fy = next_pts[:, 1] - prev_pts[:, 1]
-                plt.quiver(prev_pts[:, 0], prev_pts[:, 1], fx, fy, color='r', angles='xy', scale_units='xy', scale=1)
-
-        plt.title(title)
-        plt.axis("off")
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(save_path + title_suffix + ".png", dpi=150)
 
 
 
@@ -201,7 +143,7 @@ def extract_segmentation_points(image_path, num_points=10):
             [int((1 - t) * lm_start.x * width + t * lm_end.x * width),
              int((1 - t) * lm_start.y * height + t * lm_end.y * height)]
             for t in np.linspace(0.2, 0.8, steps)
-            if lm_start.visibility > 0.5 and lm_end.visibility > 0.5
+            if lm_start.visibility > 0.3 and lm_end.visibility > 0.2
         ]
 
     left_arm_points = sample_line(landmarks[11], landmarks[15])  # left shoulder to left wrist
@@ -237,12 +179,21 @@ def segment_human(image, sampled_points):
     sam_predictor.set_image(image_rgb)
 
     # Predict segmentation mask using sampled points
+    # masks, _, _ = sam_predictor.predict(
+    #     point_coords=sampled_points, 
+    #     point_labels=np.ones(len(sampled_points)),  # 1 for foreground
+    #     multimask_output=False
+    # )
+    # Convert inputs to tensors and move to CUDA
+    point_coords = torch.tensor(sampled_points, dtype=torch.float32).to("cuda")
+    point_labels = torch.ones(len(sampled_points), dtype=torch.int64).to("cuda")
+
+    # Predict with GPU inputs
     masks, _, _ = sam_predictor.predict(
-        point_coords=sampled_points, 
-        point_labels=np.ones(len(sampled_points)),  # 1 for foreground
+        point_coords=point_coords,
+        point_labels=point_labels,
         multimask_output=False
     )
-
     segmentation_mask = masks[0]
 
     # 🔥 Morphological processing
@@ -287,154 +238,6 @@ def replace_background(image, mask, reference_image):
 
     return result_image
 
-def process_video(video_path, output_folder, background_path=None, hand_mask_folder = None, handedness = 'left'):
-    """
-    Processes a video frame by frame using MediaPipe + SAM2 segmentation,
-    falls back to MediaPipe or optical flow when needed,
-    and optionally replaces background using a reference image.
-    """
-    os.makedirs(output_folder, exist_ok=True)
-
-    cap = cv2.VideoCapture(video_path)
-    frame_count = 0
-    fps = int(cap.get(cv2.CAP_PROP_FPS))
-
-    reference_image = None
-    if background_path is not None:
-        reference_image = cv2.imread(background_path)
-        if reference_image is None:
-            raise ValueError(f"❌ Could not read background image at {background_path}")
-
-    prev_frame = None
-    prev_mask = None
-    prev_landmarks = None
-
-    while cap.isOpened():
-        ret, frame = cap.read()
-        if not ret:
-            break
-
-        final_output_path = os.path.join(output_folder, f"frame_{frame_count:06d}_final.png")
-        landmark_flow = None
-
-        image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(frame)
-        height, width = frame.shape[:2]
-
-        # Define valid region: bottom 2/3 of the image
-        if mediapipe_mask is not None:
-            valid_region_mask = np.zeros_like(mediapipe_mask, dtype=np.uint8)
-            valid_region_mask[int(height * (1 / 3)):, :] = 1
-        else:
-            valid_region_mask = np.ones((height, width), dtype=np.uint8)
-
-        if sampled_points is not None:
-            # Step 1: Run SAM2
-            segmentation_mask = segment_human(image, sampled_points)
-            refined_mask = segmentation_mask.copy()
-
-            # Step 2: Mask out invalid regions
-            masked_mp = np.logical_and(mediapipe_mask, valid_region_mask)
-            masked_sam = np.logical_and(segmentation_mask, valid_region_mask)
-
-            mp_area = np.sum(masked_mp)
-            sam_area = np.sum(masked_sam)
-
-            min_mask_area = 500  # can be tuned
-            use_mp_mask = False
-
-            if mp_area < min_mask_area:
-                
-                print(f"⚠️ Frame {frame_count}: MediaPipe mask too small (area={mp_area}) — ignoring it.")
-                continue
-            else:
-                intersection = np.logical_and(masked_sam, masked_mp).sum()
-                union = np.logical_or(masked_sam, masked_mp).sum()
-                iou = intersection / union if union > 0 else 0
-                print(f"ℹ️ Frame {frame_count}: IoU = {iou:.2f}")
-
-                if iou < 0.1:
-                    print(f"⚠️ Frame {frame_count}: Low IoU — using MediaPipe mask instead.")
-                    refined_mask = mediapipe_mask.copy()
-                    use_mp_mask = True
-
-            # Step 3: Fallback to optical flow if both masks are poor
-            if np.sum(np.logical_and(refined_mask, valid_region_mask)) < min_mask_area and not use_mp_mask:
-                print(f"❌ Frame {frame_count}: Both SAM2 and MP failed — using optical flow fallback.")
-                if prev_frame is not None and prev_mask is not None:
-                    refined_mask, _ = warp_mask_with_optical_flow(prev_frame, frame, prev_mask)
-
-            # Step 4: Replace background
-            final_result = replace_background(image, refined_mask, reference_image) if reference_image is not None else frame.copy()
-
-            # Step 5: Compute landmark flow
-            if prev_frame is not None and prev_landmarks is not None:
-                good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
-                if len(good_prev) > 0:
-                    landmark_flow = (good_prev, good_next)
-
-            # Step 6: Save data for next frame
-            prev_frame = frame.copy()
-            prev_mask = refined_mask.copy()
-            prev_landmarks = sampled_points.copy()
-
-            # Step 7: Visualize & Save
-            visualize_segmentation_debug(
-                original=frame,
-                skeleton=annotated_image,
-                mediapipe_mask=masked_mp,
-                refined_mask=masked_sam,
-                fallback_mask=refined_mask,
-                final=final_result,
-                flow=landmark_flow,
-                title_suffix=f"(Frame {frame_count})",
-                save_path = "hamer_detector/example_data/test-env-pose-seg-2-tmp/"
-            )
-
-            cv2.imwrite(final_output_path, final_result)
-
-        else:
-            print(f"⚠️ Frame {frame_count}: No pose detected — using optical flow points as input to SAM2.")
-            if prev_frame is not None and prev_landmarks is not None:
-                good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
-                if len(good_next) >= 4:
-                    print(f"ℹ️ Using {len(good_next)} tracked landmarks for SAM2.")
-                    segmentation_mask = segment_human(frame, good_next.astype(int))
-                    refined_mask = segmentation_mask.copy()
-
-                    final_result = replace_background(frame, refined_mask, reference_image) if reference_image is not None else frame.copy()
-
-                    visualize_segmentation_debug(
-                        original=frame,
-                        fallback_mask=refined_mask,
-                        final=final_result,
-                        flow=(good_prev, good_next),
-                        title_suffix=f"(Frame {frame_count} - SAM2 via Flow Landmarks)",
-                        save_path = "hamer_detector/example_data/test-env-pose-seg-2-tmp/"
-                    )
-
-                    cv2.imwrite(final_output_path, final_result)
-
-                    prev_frame = frame.copy()
-                    prev_mask = refined_mask.copy()
-                    prev_landmarks = good_next.copy()
-                else:
-                    print(f"❌ Frame {frame_count}: Not enough flow-tracked landmarks — skipping.")
-                    frame_count += 1
-                    continue
-            else:
-                print(f"❌ Skipping frame {frame_count} — no previous pose/landmarks.")
-                frame_count += 1
-                continue
-
-        frame_count += 1
-
-    cap.release()
-    print(f"✅ Processed {frame_count} frames. Now compiling into video...")
-
-    os.system(f"ffmpeg -framerate {fps} -i {output_folder}frame_%06d_final.png -c:v libx264 -pix_fmt yuv420p {output_folder}output_video.mp4")
-
-    print("✅ Video processing complete! Output saved to:", output_folder)
-
 def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None):
     """
     Processes a folder of images using MediaPipe + SAM2 segmentation,
@@ -462,6 +265,7 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
 
     for idx, image_path in enumerate(image_paths):
         frame = cv2.imread(image_path)
+        
         frame_count = int(image_paths[idx][-10:-4])
         # frame_count = idx  # Use index for naming
 
@@ -470,6 +274,25 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
 
         image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(frame)
         height, width = frame.shape[:2]
+        # Load and sample hand mask points before SAM2
+        suffix = f"{frame_count:06d}_handmask.png"
+        matching_files = [f for f in os.listdir(hand_model_path) if f.endswith(suffix)]
+        hand_mask = None
+        if matching_files:
+            mask_path = os.path.join(hand_model_path, matching_files[0])
+            hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+
+        if hand_mask is not None:
+            hand_mask = (hand_mask > 127).astype(np.uint8)
+            print(f"✔️ Loaded hand mask for frame {frame_count}")
+            kernel = np.ones((5, 5), np.uint8)
+            dilated_mask = cv2.dilate(hand_mask, kernel, iterations=1)
+            ys, xs = np.where(dilated_mask > 0)
+            if len(xs) > 0:
+                indices = np.random.choice(len(xs), size=min(10, len(xs)), replace=False)
+                hand_sampled = np.stack([xs[indices], ys[indices]], axis=1)
+                if sampled_points is not None:
+                    sampled_points = np.vstack([sampled_points, hand_sampled])
 
         if mediapipe_mask is not None:
             valid_region_mask = np.zeros_like(mediapipe_mask, dtype=np.uint8)
@@ -485,6 +308,7 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
             masked_sam = np.logical_and(segmentation_mask, valid_region_mask)
 
             mp_area = np.sum(masked_mp)
+            
             sam_area = np.sum(masked_sam)
 
             min_mask_area = 500
@@ -510,8 +334,15 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
                     refined_mask, _ = warp_mask_with_optical_flow(prev_frame, frame, prev_mask)
 
             # merge mask with Mano hand model
-            mask_path = os.path.join(hand_model_path, f"frame_{frame_count:06d}_handmask.png")
-            hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            # Find file that ends with the expected handmask suffix
+            suffix = f"{frame_count:06d}_handmask.png"
+            matching_files = [f for f in os.listdir(hand_model_path) if f.endswith(suffix)]
+            if matching_files:
+                mask_path = os.path.join(hand_model_path, matching_files[0])
+                hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            else:
+                hand_mask = None
+                
             if hand_mask is not None:
                 hand_mask = (hand_mask > 127).astype(np.uint8)
                 print(f"✔️ Loaded hand mask for frame {frame_count}")
@@ -524,8 +355,7 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
 
                 # Combine with refined human mask
                 refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
-            else:
-                print(f"⚠️ No hand mask found for frame {frame_count}")
+                
             # cv2.imshow("mask", refined_mask*255)
             # cv2.waitKey(0)
             # merge hand mask into refined mask
@@ -541,18 +371,8 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
             prev_mask = refined_mask.copy()
             prev_landmarks = sampled_points.copy()
 
-            visualize_segmentation_debug(
-                original=frame,
-                skeleton=annotated_image,
-                mediapipe_mask=masked_mp,
-                refined_mask=masked_sam,
-                fallback_mask=refined_mask,
-                final=final_result,
-                flow=landmark_flow,
-                title_suffix=f"(Frame {frame_count})",
-                save_path=os.path.join(output_folder, "debug")
-            )
-
+            mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
+            cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
             cv2.imwrite(final_output_path, final_result)
 
         else:
@@ -565,8 +385,15 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
                     refined_mask = segmentation_mask.copy()
 
                     # merge mask with Mano hand model
-                    mask_path = os.path.join(hand_model_path, f"frame_{frame_count:06d}_handmask.png")
-                    hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    # mask_path = os.path.join(hand_model_path, f"frame_{frame_count:06d}_handmask.png")
+                    suffix = f"{frame_count:06d}_handmask.png"
+                    matching_files = [f for f in os.listdir(hand_model_path) if f.endswith(suffix)]
+                    if matching_files:
+                        mask_path = os.path.join(hand_model_path, matching_files[0])
+                        hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+                    else:
+                        hand_mask = None
+                    # hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
                     if hand_mask is not None:
                         hand_mask = (hand_mask > 127).astype(np.uint8)
                         print(f"✔️ Loaded hand mask for frame {frame_count}")
@@ -580,17 +407,9 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
                         # Combine with refined human mask
                         refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
                         
-
+                    mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
+                    cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
                     final_result = replace_background(frame, refined_mask, reference_image) if reference_image is not None else frame.copy()
-
-                    visualize_segmentation_debug(
-                        original=frame,
-                        fallback_mask=refined_mask,
-                        final=final_result,
-                        flow=(good_prev, good_next),
-                        title_suffix=f"(Frame {frame_count} - SAM2 via Flow Landmarks)",
-                        save_path=os.path.join(output_folder, "debug")
-                    )
 
                     cv2.imwrite(final_output_path, final_result)
 
@@ -606,39 +425,8 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
 
     print("✅ Image folder processing complete.")
 
-
-# def main():
-#     """
-#     Main function to process images from a folder.
-#     """
-
-#     background_path = "human_segmentor/first_frame.png"
-#     video_path = "/home/xhe71/Downloads/human (1).mp4"  # Change this to your input video
-#     output_folder = "hamer_detector/example_data/test-env-pose-seg-2/"
-
-#     process_video(video_path, output_folder, background_path)
-    
-# if __name__ == "__main__":
-#     main()
-#     import os
-#     import argparse
-#     cwd = os.getcwd()
-
-#     parser = argparse.ArgumentParser(description="Human segmentation and background replacement using MediaPipe + SAM2")
-#     parser.add_argument("--video_path", type=str, default= "/home/xhe71/Downloads/human (1).mp4",
-#                         help="Path to input video file")
-#     parser.add_argument("--output_folder", type=str, default= "hamer_detector/example_data/test-env-pose-seg-2/",
-#                         help="Directory to save processed frames and output video")
-#     parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png",
-#                         help="Path to background image for replacement")
-
-
-# if __name__ == "__main__":
-#     import argparse
-#     parser = argparse.ArgumentParser(description="Segment folder of images using MediaPipe + SAM2")
-#     parser.add_argument("--image_folder", type=str,default= "/home/xhe71/Desktop/robotool_test/tmp_imgs", help="Path to input image folder")
-#     parser.add_argument("--output_folder", type=str,default= "hamer_detector/example_data/test-env-pose-seg-2/", help="Path to save processed images and debug outputs")
-#     parser.add_argument("--background_path", type=str, default= "human_segmentor/first_frame.png", help="Background image for replacement")
-#     args = parser.parse_args()
-
-#     process_image_folder(args.image_folder, args.output_folder, args.background_path)
+# image_folder = "/home/xhe71/Desktop/robotool_data/Color_frames"
+# output_folder = "/home/xhe71/Desktop/robotool_data/Color_segmented"
+# background_path = "/home/xhe71/Desktop/robotool_data/Color/color_000003.png"
+# hand_model_path = "/home/xhe71/Desktop/robotool_data/Color_hamer"
+# process_image_folder(image_folder, output_folder, background_path, hand_model_path)
