@@ -93,7 +93,7 @@ def render_rgba_multiple(
 
     scene = pyrender.Scene(bg_color=[*scene_bg_color, 0.0],
                             ambient_light=(0.4, 0.3, 0.3))
-    pyrender_mesh = pyrender.Mesh.from_trimesh(transformed_mesh, smooth=False)
+    pyrender_mesh = pyrender.Mesh.from_trimesh(transformed_mesh, smooth=True)
     scene.add(pyrender_mesh)
 
     camera_pose = np.eye(4)
@@ -151,10 +151,10 @@ def render_rgba_multiple(
             arrow.apply_transform(rot)
         return arrow
 
-    z_arrow = make_axis_arrow((1, 0, 0), 'z')    # Red Z
-    x_arrow = make_axis_arrow((0, 1, 0), 'x')    # Green X
-    y_arrow = make_axis_arrow((0, 0.6, 1), 'y')  # Blue Y
     if debug:
+        z_arrow = make_axis_arrow((1, 0, 0), 'z')    # Red Z
+        x_arrow = make_axis_arrow((0, 1, 0), 'x')    # Green X
+        y_arrow = make_axis_arrow((0, 0.6, 1), 'y')  # Blue Y
         for arr in [z_arrow, x_arrow, y_arrow]:
             arr = transform_mesh(arr, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
             arrow_mesh = pyrender.Mesh.from_trimesh(arr, smooth=False)
@@ -226,4 +226,4 @@ if __name__ == "__main__":
     output_folder = "/home/xhe71/Desktop/robotool_data/Color_final"
     intrinsic_path = "/home/xhe71/Desktop/robotool_data/camera_intrinsics.json"
     replace_sphere(mesh_folder, image_folder, output_folder, intrinsic_path)
-    convert_images_to_video(output_folder, framerate=30)
+    convert_images_to_video(output_folder, framerate=10)

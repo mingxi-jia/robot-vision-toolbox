@@ -406,9 +406,9 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
 
                         # Combine with refined human mask
                         refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
-                        
-                    mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
-                    cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
+                    if debug:
+                        mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
+                        cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
                     final_result = replace_background(frame, refined_mask, reference_image) if reference_image is not None else frame.copy()
 
                     cv2.imwrite(final_output_path, final_result)

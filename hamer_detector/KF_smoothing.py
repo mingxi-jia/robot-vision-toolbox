@@ -6,10 +6,15 @@ from scipy.spatial.transform import Rotation as R
 import os
 
 # === Global smoothing settings ===
+# for sample rate less that 3
 SMOOTH_PARAMS = {
     "trans_noise": 1e-6,
     "obs_noise": 1e-4,
 }
+# SMOOTH_PARAMS = {
+#     "trans_noise": 1e-4,
+#     "obs_noise": 1e-4,
+# }
 
 # Separate smoothing for orientation
 ORIENT_SMOOTH_PARAMS = {

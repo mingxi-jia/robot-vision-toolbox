@@ -231,17 +231,18 @@ def detect_hand(args):
                     tmesh.export(os.path.join(args.out_folder, f'{img_fn}.obj'))
                     
         # Render front view
-        if len(all_verts) > 0 and args.debug:
+        if len(all_verts) > 0:
             misc_args = dict(
                 mesh_base_color=LIGHT_BLUE,
                 scene_bg_color=(1, 1, 1),
                 focal_length=scaled_focal_length,
             )
+            
+            
             full_render_timer = time.time()
             cam_view = renderer.render_rgba_multiple(all_verts, cam_t=all_cam_t, render_res=img_size[n], is_right=all_right, **misc_args)
-            # Save binary mask of rendered hand (from alpha channel)
             hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
-            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+
             # Rendering complete
             
             hamer_vertices = np.vstack(all_verts)
@@ -249,12 +250,15 @@ def detect_hand(args):
             hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, hand_mask, camera_intrinsics)
             translation = hamer_aligned.mean(axis=0)
             all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
-            
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
             # Overlay image
-            input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
-            input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
-            input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
-            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
+            if args.debug:
+                # Save binary mask of rendered hand (from alpha channel)
+                
+                input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
+                input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
+                input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
+                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
         elif len(all_verts) > 0:
             # Even without rendering, still compute translation
             dummy_mask = np.ones_like(depth_img, dtype=np.uint8) * 255
@@ -288,6 +292,6 @@ if __name__ == '__main__':
     parser.add_argument('--rescale_factor', type=float, default=1.0, help='Factor for padding the bbox')
     parser.add_argument('--body_detector', type=str, default='regnety', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
-    parser.add_argument('--debug', action='store_true', help='If set, enables full rendering and saves overlay/mask outputs')
+    parser.add_argument('--debug', action='store_false', help='If set, enables full rendering and saves overlay/mask outputs')
     args = parser.parse_args()
     detect_hand(args)
