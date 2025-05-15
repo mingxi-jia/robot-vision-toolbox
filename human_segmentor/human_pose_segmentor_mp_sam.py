@@ -238,7 +238,7 @@ def replace_background(image, mask, reference_image):
 
     return result_image
 
-def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None):
+def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None, debug = False):
     """
     Processes a folder of images using MediaPipe + SAM2 segmentation,
     falls back to MediaPipe or optical flow when needed,
@@ -370,9 +370,9 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
             prev_frame = frame.copy()
             prev_mask = refined_mask.copy()
             prev_landmarks = sampled_points.copy()
-
-            mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
-            cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
+            if debug:
+                mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
+                cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
             cv2.imwrite(final_output_path, final_result)
 
         else:

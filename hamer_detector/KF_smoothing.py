@@ -7,8 +7,14 @@ import os
 
 # === Global smoothing settings ===
 SMOOTH_PARAMS = {
-    "trans_noise": 1e-5,
+    "trans_noise": 1e-6,
     "obs_noise": 1e-4,
+}
+
+# Separate smoothing for orientation
+ORIENT_SMOOTH_PARAMS = {
+    "trans_noise": 1e-4,
+    "obs_noise": 1e-5,
 }
 
 def make_rotation_vectors_continuous(rot_vecs):
@@ -35,6 +41,17 @@ def smooth_3d_sequence(data):
         observation_covariance=SMOOTH_PARAMS["obs_noise"] * np.eye(3)
     )
     smoothed, _ = kf.smooth(data)
+    return smoothed
+
+def smooth_orientation_sequence(rot_vecs):
+    kf = KalmanFilter(
+        initial_state_mean=rot_vecs[0],
+        transition_matrices=np.eye(3),
+        observation_matrices=np.eye(3),
+        transition_covariance=ORIENT_SMOOTH_PARAMS["trans_noise"] * np.eye(3),
+        observation_covariance=ORIENT_SMOOTH_PARAMS["obs_noise"] * np.eye(3)
+    )
+    smoothed, _ = kf.smooth(rot_vecs)
     return smoothed
 
 
@@ -164,16 +181,17 @@ def smooth_hand_pose_json_KF(json_path):
 
     # First apply KF to rotation vectors
     rot_vecs = R.from_matrix(rot_mats).as_rotvec()
-    rot_vecs = make_rotation_vectors_continuous(rot_vecs)
-    smoothed_rot_vecs = smooth_3d_sequence(rot_vecs)
+    # rot_vecs = make_rotation_vectors_continuous(rot_vecs)
+    # smoothed_rot_vecs = smooth_orientation_sequence(rot_vecs)
 
-    # Convert to quaternions and smooth
-    smoothed_quats = R.from_rotvec(smoothed_rot_vecs).as_quat()
-    smoothed_quats = make_quaternion_sequence_continuous(smoothed_quats)
-    smoothed_quats = smooth_quaternion_sequence(smoothed_quats, window_size=15)
-    smoothed_quats = clamp_quaternion_velocity(smoothed_quats, max_degrees=8)
-    smoothed_rot_mats = R.from_quat(smoothed_quats).as_matrix()
+    # # Convert to quaternions and smooth
+    # smoothed_quats = R.from_rotvec(smoothed_rot_vecs).as_quat()
+    # smoothed_quats = make_quaternion_sequence_continuous(smoothed_quats)
+    # smoothed_quats = smooth_quaternion_sequence(smoothed_quats, window_size=15)
+    # smoothed_quats = clamp_quaternion_velocity(smoothed_quats, max_degrees=8)
+    # smoothed_rot_mats = R.from_quat(smoothed_quats).as_matrix()
 
+    smoothed_rot_mats = rot_mats  # Use original orientations
     # 2D Visualization: Translation and SLERP-smoothed orientation
     original_quats = R.from_matrix(rot_mats).as_quat()
     smoothed_quats = R.from_matrix(smoothed_rot_mats).as_quat()
@@ -217,16 +235,16 @@ def smooth_hand_pose_json_KF(json_path):
     fig, axs = plt.subplots(9, 1, figsize=(12, 18), sharex=True)
     trans_labels = ["X", "Y", "Z"]
     for i in range(3):
-        axs[i].plot(frame_ids_numeric, cam_ts[:, i], label="Original", alpha=0.4)
-        axs[i].plot(frame_ids_numeric, smoothed_cam_ts[:, i], label="KF Smoothed", linewidth=2)
+        axs[i].plot(frame_ids_numeric, cam_ts[:, i], label="Original", alpha=0.4, linewidth=2)
+        axs[i].plot(frame_ids_numeric, smoothed_cam_ts[:, i], label="KF Smoothed", linewidth=1)
         axs[i].set_ylabel(f"Trans {trans_labels[i]}")
         # axs[i].set_yscale('symlog')  # Use symmetric log scale to handle both + and - values
         axs[i].legend()
 
     quat_labels = ["X", "Y", "Z", "W"]
     for i in range(4):
-        axs[i+3].plot(frame_ids_numeric, original_quats[:, i], label="Original", alpha=0.4)
-        axs[i+3].plot(frame_ids_numeric, smoothed_quats[:, i], label="Smoothed", linewidth=2)
+        axs[i+3].plot(frame_ids_numeric, original_quats[:, i], label="Original", alpha=0.4, linewidth=2)
+        axs[i+3].plot(frame_ids_numeric, smoothed_quats[:, i], label="Smoothed", linewidth=1)
         axs[i+3].set_ylabel(f"Quat {quat_labels[i]}")
         axs[i+3].legend()
 

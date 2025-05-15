@@ -12,6 +12,9 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import json
 from hamer.utils.renderer import create_raymond_lights
+import sys
+sys.path.append('./')
+from human_segmentor.util import convert_images_to_video, get_first_frame
 from util import convert_images_to_video
 os.environ["PYOPENGL_PLATFORM"] = "egl"  # or "osmesa" if EGL fails
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
@@ -46,7 +49,7 @@ def transform_mesh(mesh, translation, rotation_matrix = None, rot_axis=[1, 0, 0]
 
         # If mesh is a sphere, rotate it to match HaMeR hand orientation
         if mesh.metadata.get("type") == "sphere":
-            align = trimesh.transformations.rotation_matrix(np.radians(90), [1, 0, 0])
+            align = trimesh.transformations.rotation_matrix(np.radians(0), [1, 0, 0])
             mesh.apply_transform(align)
 
         mesh.apply_transform(rot4x4)
@@ -81,6 +84,7 @@ def render_rgba_multiple(
         focal_length=None,
         is_right=False,
         renderer=None,
+        debug=True,
     ):
 
     # renderer is now passed in from outside and reused
@@ -150,10 +154,11 @@ def render_rgba_multiple(
     z_arrow = make_axis_arrow((1, 0, 0), 'z')    # Red Z
     x_arrow = make_axis_arrow((0, 1, 0), 'x')    # Green X
     y_arrow = make_axis_arrow((0, 0.6, 1), 'y')  # Blue Y
-    for arr in [z_arrow, x_arrow, y_arrow]:
-        arr = transform_mesh(arr, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
-        arrow_mesh = pyrender.Mesh.from_trimesh(arr, smooth=False)
-        scene.add(arrow_mesh)
+    if debug:
+        for arr in [z_arrow, x_arrow, y_arrow]:
+            arr = transform_mesh(arr, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
+            arrow_mesh = pyrender.Mesh.from_trimesh(arr, smooth=False)
+            scene.add(arrow_mesh)
     
     color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
     color = color.astype(np.float32) / 255.0
@@ -162,7 +167,7 @@ def render_rgba_multiple(
     return color
 
 
-def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path):
+def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path, debug=False):
     import json
     from multiprocessing import Pool
     os.makedirs(output_folder, exist_ok=True)
@@ -180,14 +185,14 @@ def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path):
         camera_intrinsics = None
 
     renderer = pyrender.OffscreenRenderer(viewport_width=640, viewport_height=360, point_size=1.0)
-    tasks = [(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer) for fname in image_files]
+    tasks = [(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer, debug) for fname in image_files]
 
     for args in tasks:
         process_frame(*args)
     renderer.delete()
 
 
-def process_frame(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer):
+def process_frame(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer, debug):
     frame_id = os.path.splitext(fname)[0].split('_')[1]
     img_path = os.path.join(image_folder, fname)
     img = np.asarray(Image.open(img_path).convert("RGB"))
@@ -207,7 +212,7 @@ def process_frame(fname, image_folder, output_folder, camera_intrinsics, hand_da
         scene_bg_color=(1, 1, 1),
     )
 
-    rendered_img = render_rgba_multiple(mesh, cam_t, camera_intrinsics, rot_matrix=rot_mat, render_res=[width, height], focal_length=camera_intrinsics, **misc_args, renderer=renderer)
+    rendered_img = render_rgba_multiple(mesh, cam_t, camera_intrinsics, rot_matrix=rot_mat, render_res=[width, height], focal_length=camera_intrinsics, **misc_args, renderer=renderer, debug=debug)
     input_img = img.astype(np.float32)[:, :, ::-1] / 255.0
     input_img = np.concatenate([input_img, np.ones_like(input_img[:, :, :1])], axis=2)
     input_img_overlay = input_img[:, :, :3] * (1 - rendered_img[:, :, 3:]) + rendered_img[:, :, :3] * rendered_img[:, :, 3:]
@@ -221,3 +226,4 @@ if __name__ == "__main__":
     output_folder = "/home/xhe71/Desktop/robotool_data/Color_final"
     intrinsic_path = "/home/xhe71/Desktop/robotool_data/camera_intrinsics.json"
     replace_sphere(mesh_folder, image_folder, output_folder, intrinsic_path)
+    convert_images_to_video(output_folder, framerate=30)

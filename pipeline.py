@@ -15,7 +15,7 @@ import time
 import matplotlib.pyplot as plt
 from hamer_detector.KF_smoothing import smooth_hand_pose_json_KF
 
-SAMPLE_RATE = 5
+SAMPLE_RATE = 1
 start_time = time.time()
 def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_out_dir, background_img, depth_img_dir, intrinsics_path):
     # Make all paths absolute
@@ -71,11 +71,12 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
         intrinsics_path = intrinsics_path,
         side_view=False,
         full_frame=True,
-        save_mesh=True,
+        save_mesh=args.debug,
         batch_size=48,
         rescale_factor=1.0,
-        body_detector="vitdet",
-        file_type=["*.jpg", "*.png"]
+        body_detector="regnety",
+        file_type=["*.jpg", "*.png"],
+        debug=args.debug
     )
     # Add depth and intrinsics to args if available
     if hasattr(hamer_args, "depth_folder") and hamer_args.depth_folder is not None:
@@ -94,13 +95,13 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     
     print("🔹 Step 3: Segmenting and removing human from video...")
     seg_start_time = time.time()
-    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir)
+    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir, debug = args.debug)
     seg_end_time = time.time()
     convert_images_to_video(segmentation_out_dir, framerate=30//SAMPLE_RATE)
     
     print("🔹 Step 4: Rendering spheres and blending with background...")
     sphere_start_time = time.time()
-    replace_sphere(hamer_out_dir, segmentation_out_dir, sphere_out_dir, intrinsics_path)
+    replace_sphere(hamer_out_dir, segmentation_out_dir, sphere_out_dir, intrinsics_path, debug=args.debug)
     sphere_end_time = time.time()
     convert_images_to_video(sphere_out_dir, framerate=30//SAMPLE_RATE)
     print("✅ All steps complete. Final images saved to:", sphere_out_dir)
@@ -127,6 +128,7 @@ if __name__ == "__main__":
     parser.add_argument("--background_img", type=str, default = None, help="Path to background image to use for replacement")
     parser.add_argument("--depth_folder", type=str, default='/home/xhe71/Desktop/robotool_data/Depth', help="Folder with depth images matching image frames")
     parser.add_argument("--intrinsics_path", type=str, default='camera_intrinsics_zed.json', help="Path to camera intrinsics .json file")
+    parser.add_argument("--debug", action="store_false", help="Enable debug mode with full rendering and mesh saving")
     args = parser.parse_args()
         # Derive output folders from video_path
     base_dir = os.path.splitext(os.path.abspath(args.video_path))[0]
