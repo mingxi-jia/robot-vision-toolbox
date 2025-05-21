@@ -65,7 +65,9 @@ sudo rsync -axPS /var/lib/docker/ /home/mingxi/docker
 # restart docker
 sudo systemctl start docker
 docker info | grep 'Docker Root Dir'
-# clean builder cache just in cache
+# delete the old folder (double check before you do this!)
+sudo rm -r /var/lib/docker 
+# clean builder cache just in case
 docker builder prune
 sudo docker rmi $(sudo docker images -f "dangling=true" -q)
 ```
