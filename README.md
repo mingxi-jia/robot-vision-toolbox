@@ -44,6 +44,40 @@ python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense
 # render sphere based on hamer results
 python hamer_detector/sphere_renderer.py
 ```
+
+# 3. fix your PC
+There are occasions when roboticists need to deal with computer problems. Here are some solutions for some cases.
+1. docker is taking up a lot root space
+```
+# check your root
+sudo ncdu -x /
+docker info | grep 'Docker Root Dir'
+# move your docker files to home
+# reference: https://medium.com/@calvineotieno010/change-docker-default-root-data-directory-a1d9271056f4
+sudo systemctl stop docker
+sudo vim /etc/docker/daemon.json
+# add this into /etc/docker/daemon.json
+#{
+#  "data-root": "/newpath"
+#}
+# Move the files
+sudo rsync -axPS /var/lib/docker/ /home/mingxi/docker
+# restart docker
+sudo systemctl start docker
+docker info | grep 'Docker Root Dir'
+# clean builder cache just in cache
+docker builder prune
+sudo docker rmi $(sudo docker images -f "dangling=true" -q)
+```
+2. clean your root
+   ```
+   sudo apt autoclean
+   sudo apt autoremove
+   sudo apt clean all
+   # delete old snap archive
+   snap list --all
+   sudo snap remove firefox --revision=6159
+   ```
 # TODOs
 - [x] sam segmentor
 - [x] single-view video segmentation
