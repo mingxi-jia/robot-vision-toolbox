@@ -21,6 +21,8 @@ import json
 from typing import Dict, Optional
 
 def detect_hand(args):
+    # The above code is not complete and seems to be missing the actual code or context. It appears to
+    # be a variable name `min_score` followed by some comment characters `
     min_score = 0.8
     with open(args.intrinsics_path, 'r') as f:
         camera_intrinsics = json.load(f)
