@@ -52,7 +52,8 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
             skip_rate = SAMPLE_RATE
             for i, fname in enumerate(image_fnames):
                 if i % skip_rate == 0:
-                    os.symlink(os.path.abspath(os.path.join(video_path, fname)), os.path.join(tmp_img_dir, fname))
+                    os.symlink(os.path.abspath(os.path.join(video_path, fname)),
+                               os.path.join(tmp_img_dir, fname))
                 
         else:
             print("🔹 Step 1: Extracting video frames...")
@@ -82,18 +83,21 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
         hamer_args.depth_folder = args.depth_folder
     if hasattr(hamer_args, "intrinsics_path") and hamer_args.intrinsics_path is not None:
         hamer_args.intrinsics_path = args.intrinsics_path
-    # detect_hand(hamer_args)
-    # hamer_end_time = time.time()
+    detect_hand(hamer_args)
+    hamer_end_time = time.time()
     convert_images_to_video(hamer_out_dir, framerate=30//SAMPLE_RATE)
     # step 2.5 Smooth centroid data
+    # smooth_KF_yml(os.path.join(hamer_out_dir, 'centroids.yml'))
+
+    # smooth_KF_yml(os.path.join(hamer_out_dir, 'wrists.yml'))
     smooth_hand_pose_json_KF(os.path.join(hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate = SAMPLE_RATE)
     print("saved smoothed KF")
     
     print("🔹 Step 3: Segmenting and removing human from video...")
-    # seg_start_time = time.time()
-    # process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir, debug = debug)
-    # seg_end_time = time.time()
-    # convert_images_to_video(segmentation_out_dir, framerate=30//SAMPLE_RATE)
+    seg_start_time = time.time()
+    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir, debug = debug)
+    seg_end_time = time.time()
+    convert_images_to_video(segmentation_out_dir, framerate=30//SAMPLE_RATE)
     
     print("🔹 Step 4: Rendering spheres and blending with background...")
     sphere_start_time = time.time()
@@ -107,15 +111,15 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     processing_frames = len(image_fnames)//SAMPLE_RATE
     total_time =  end_time - start_time
     avg_time = round(total_time / processing_frames, 4)
-    # hamer_avg_time = round((hamer_end_time-hamer_start_time) / processing_frames, 4)
-    # seg_avg_time = round((seg_end_time-seg_start_time) / processing_frames, 4)
+    hamer_avg_time = round((hamer_end_time-hamer_start_time) / processing_frames, 4)
+    seg_avg_time = round((seg_end_time-seg_start_time) / processing_frames, 4)
     sphere_avg_time = round((sphere_end_time-sphere_start_time) / processing_frames, 4)
     print("total processing frames: ", processing_frames, "frames")
     print("total processing time: ", total_time, "seconds")
     print("Average: ", avg_time, "seconds/frame")
-    # print("Average Hamer:             |", hamer_avg_time, "seconds/frame |", round((hamer_avg_time/avg_time)*100, 2), '\%')
-    # print("Average Segmentation:      |", seg_avg_time, "seconds/frame | ", round((seg_avg_time/avg_time)*100, 2), '\%')
-    # print("Average Sphere Replacement:|", sphere_avg_time, "seconds/frame |", round((sphere_avg_time/avg_time)*100, 2), '\%')
+    print("Average Hamer:             |", hamer_avg_time, "seconds/frame |", round((hamer_avg_time/avg_time)*100, 2), '\%')
+    print("Average Segmentation:      |", seg_avg_time, "seconds/frame | ", round((seg_avg_time/avg_time)*100, 2), '\%')
+    print("Average Sphere Replacement:|", sphere_avg_time, "seconds/frame |", round((sphere_avg_time/avg_time)*100, 2), '\%')
     print("----------------------------------")
 
 if __name__ == "__main__":
