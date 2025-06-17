@@ -88,7 +88,12 @@ def detect_hand(args):
             if f.endswith(f"{frame_id}.npy"):
                 # depth_npy_path = "/home/xhe71/Desktop/robotool_data/Depth/depth_000370.npy"
                 depth_img = np.load(os.path.join(args.depth_folder, f))  # Already in meters
-                # depth_img = np.fromfile(os.path.join(args.depth_folder, f), dtype=np.uint16).reshape((height, width))
+
+                # Check if the depth image is in mm (has large values)
+                non_zero_values = depth_img[depth_img > 0]
+                if np.any(non_zero_values > 500):
+                    depth_img = depth_img.astype(np.float32) / 1000.0  # Convert mm to meters
+
                 break
             elif f.endswith(f"{frame_id}.png"):
                 depth_img = cv2.imread(os.path.join(args.depth_folder, f), cv2.IMREAD_UNCHANGED)
@@ -206,17 +211,18 @@ def detect_hand(args):
                 verts[:,0] = (2*is_right-1)*verts[:,0]
                 cam_t = pred_cam_t_full[n]
                 # Get predicted global rotation
-                global_orient = out['pred_mano_params']['global_orient'][n].detach().contiguous().cpu().numpy().tolist()
+                global_orient = out['pred_mano_params']['global_orient'][n].detach().contiguous().cpu().numpy()[0]
                 # # Handedness correction for global_orient
                 if not is_right:
-                    global_orient[0] *= -1
+                    global_orient[:,0] *= -1
+                    global_orient[:,2] *= -1
 
                 # Save to batch dictionary
                 hand_key = f"{img_fn}"
 
                 all_hand_results[hand_key] = {
                     "pred_cam_t": cam_t.tolist(),
-                    "global_orient": global_orient,
+                    "global_orient": global_orient.tolist(),
                     "is_right": bool(is_right),
                     "scaled_focal_length": float(scaled_focal_length),
                     "score": float(best_hand["score"]),

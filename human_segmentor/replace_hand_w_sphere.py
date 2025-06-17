@@ -172,7 +172,9 @@ def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path, de
     from multiprocessing import Pool
     os.makedirs(output_folder, exist_ok=True)
     image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_final.png")])
-
+    first_image_path = os.path.join(image_folder, image_files[0])
+    image = cv2.imread(first_image_path)
+    height, width, _ = image.shape
     # Load hand mesh info
     with open(os.path.join(mesh_folder, "hand_pose_camera_info_smoothed.json"), "r") as f:
         hand_data = json.load(f)
@@ -184,7 +186,7 @@ def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path, de
     else:
         camera_intrinsics = None
 
-    renderer = pyrender.OffscreenRenderer(viewport_width=640, viewport_height=360, point_size=1.0)
+    renderer = pyrender.OffscreenRenderer(viewport_width=width, viewport_height=height, point_size=1.0)
     tasks = [(fname, image_folder, output_folder, camera_intrinsics, hand_data, renderer, debug) for fname in image_files]
 
     for args in tasks:

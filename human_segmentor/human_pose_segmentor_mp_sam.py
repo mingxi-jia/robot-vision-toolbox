@@ -166,7 +166,46 @@ def extract_segmentation_points(image_path, num_points=10):
     # cv2.imshow("landmarks", annotated_image)
     # cv2.waitKey(1)
     return image, sampled_points, annotated_image, largest_mask
+def extend_arm_from_depth(hand_mask, depth_image, max_arm_length=100, depth_tolerance=100):
+    """
+    Grows a region from the hand mask in the depth image to estimate arm area.
+    """
+    h, w = hand_mask.shape
+    arm_mask = np.zeros_like(hand_mask, dtype=np.uint8)
 
+    # 1. Find starting point from hand mask
+    ys, xs = np.where(hand_mask > 0)
+    if len(xs) == 0:
+        return arm_mask  # Empty
+
+    start_y = int(np.mean(ys))
+    start_x = int(np.mean(xs))
+    start_depth = depth_image[start_y, start_x]
+
+    if start_depth == 0:
+        return arm_mask  # Invalid depth
+
+    # 2. BFS-style region growing
+    visited = np.zeros_like(hand_mask, dtype=bool)
+    queue = [(start_y, start_x)]
+    arm_mask[start_y, start_x] = 1
+    visited[start_y, start_x] = True
+
+    count = 0
+    while queue and count < max_arm_length:
+        y, x = queue.pop(0)
+        count += 1
+        for dy in [-1, 0, 1]:
+            for dx in [-1, 0, 1]:
+                ny, nx = y + dy, x + dx
+                if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx]:
+                    d = depth_image[ny, nx]
+                    if d != 0 and abs(int(d) - int(start_depth)) < depth_tolerance:
+                        visited[ny, nx] = True
+                        arm_mask[ny, nx] = 1
+                        queue.append((ny, nx))
+
+    return arm_mask
 def segment_human(image, sampled_points):
     """
     Uses SAM2 to refine segmentation using evenly sampled points from MediaPipe's segmentation mask.
@@ -238,7 +277,7 @@ def replace_background(image, mask, reference_image):
 
     return result_image
 
-def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None, debug = False):
+def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None, debug = True, depth_folder = None):
     """
     Processes a folder of images using MediaPipe + SAM2 segmentation,
     falls back to MediaPipe or optical flow when needed,
@@ -252,6 +291,11 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
         if f.endswith(('.jpg', '.png'))
     ])
 
+    depth_paths = sorted([
+        os.path.join(depth_folder, f)
+        for f in os.listdir(depth_folder)
+        if f.endswith(('.npy', '.png'))
+    ])
     if background_path is not None:
         reference_image = cv2.imread(background_path)
         if reference_image is None:
@@ -266,6 +310,7 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
     for idx, image_path in enumerate(image_paths):
         frame = cv2.imread(image_path)
         
+        depth_image = cv2.imread(depth_paths[idx])
         frame_count = int(image_paths[idx][-10:-4])
         # frame_count = idx  # Use index for naming
 
@@ -293,7 +338,60 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
                 hand_sampled = np.stack([xs[indices], ys[indices]], axis=1)
                 if sampled_points is not None:
                     sampled_points = np.vstack([sampled_points, hand_sampled])
+                # ✅ If MediaPipe failed or gave too few points, try depth-based extension
+        need_depth_extension = (
+            mediapipe_mask is None or 
+            sampled_points is None or 
+            len(sampled_points) < 6
+        )
 
+        if need_depth_extension and depth_image is not None:
+            print(f"🔄 Frame {frame_count}: Trying to extend arm using depth...")
+
+            if len(depth_image.shape) == 3:
+                depth_gray = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+            else:
+                depth_gray = depth_image
+
+            arm_mask = extend_arm_from_depth(hand_mask, depth_gray, max_arm_length=300, depth_tolerance=100)
+
+            ys_arm, xs_arm = np.where(arm_mask > 0)
+            if len(xs_arm) > 0:
+                arm_indices = np.random.choice(len(xs_arm), size=min(15, len(xs_arm)), replace=False)
+                arm_sampled = np.stack([xs_arm[arm_indices], ys_arm[arm_indices]], axis=1)
+
+                print(f"➕ Frame {frame_count}: Added {len(arm_sampled)} arm points from depth.")
+                if sampled_points is not None:
+                    sampled_points = np.vstack([sampled_points, arm_sampled])
+                else:
+                    sampled_points = arm_sampled
+                    # ✅ If MediaPipe failed or gave too few points, try depth-based extension
+        need_depth_extension = (
+            mediapipe_mask is None or 
+            sampled_points is None or 
+            len(sampled_points) < 6
+        )
+
+        if need_depth_extension and depth_image is not None:
+            print(f"🔄 Frame {frame_count}: Trying to extend arm using depth...")
+
+            if len(depth_image.shape) == 3:
+                depth_gray = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+            else:
+                depth_gray = depth_image
+
+            arm_mask = extend_arm_from_depth(hand_mask, depth_gray, max_arm_length=300, depth_tolerance=100)
+
+            ys_arm, xs_arm = np.where(arm_mask > 0)
+            if len(xs_arm) > 0:
+                arm_indices = np.random.choice(len(xs_arm), size=min(15, len(xs_arm)), replace=False)
+                arm_sampled = np.stack([xs_arm[arm_indices], ys_arm[arm_indices]], axis=1)
+
+                print(f"➕ Frame {frame_count}: Added {len(arm_sampled)} arm points from depth.")
+                if sampled_points is not None:
+                    sampled_points = np.vstack([sampled_points, arm_sampled])
+                else:
+                    sampled_points = arm_sampled
         if mediapipe_mask is not None:
             valid_region_mask = np.zeros_like(mediapipe_mask, dtype=np.uint8)
             valid_region_mask[int(height * (1 / 3)):, :] = 1
@@ -316,7 +414,6 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
 
             if mp_area < min_mask_area:
                 print(f"⚠️ Frame {frame_count}: MediaPipe mask too small (area={mp_area}) — skipping.")
-                continue
             else:
                 intersection = np.logical_and(masked_sam, masked_mp).sum()
                 union = np.logical_or(masked_sam, masked_mp).sum()

@@ -167,7 +167,7 @@ def update_filtering_to_per_axis(
         score = v.get("score", 0.0)
         cam_t = np.array(v["pred_cam_t"])
         try:
-            rot_mat = np.array(v["global_orient"][0])
+            rot_mat = np.array(v["global_orient"])
             if rot_mat.shape != (3, 3):
                 raise ValueError(f"Invalid rotation matrix shape for frame {fid}: {rot_mat.shape}")
         except Exception as e:
@@ -294,7 +294,7 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     for fid, v in trimmed_items:
         try:
             cam_t = np.array(v["pred_cam_t"])
-            rot_mat = np.array(v["global_orient"][0])
+            rot_mat = np.array(v["global_orient"])
             if rot_mat.shape != (3, 3):
                 raise ValueError(f"Invalid rotation matrix shape for frame {fid}: {rot_mat.shape}")
             raw_cam_ts.append(cam_t)
@@ -361,7 +361,7 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
         score = v.get("score", 0.0)
         cam_t = np.array(v["pred_cam_t"])
         try:
-            rot_mat = np.array(v["global_orient"][0])
+            rot_mat = np.array(v["global_orient"])
             if rot_mat.shape != (3, 3):
                 raise ValueError(f"Invalid rotation matrix shape for frame {fid}: {rot_mat.shape}")
         except Exception as e:

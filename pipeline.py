@@ -95,7 +95,7 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     
     print("🔹 Step 3: Segmenting and removing human from video...")
     seg_start_time = time.time()
-    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir, debug = debug)
+    process_image_folder(image_folder=tmp_img_dir, output_folder=segmentation_out_dir, background_path=background_img, hand_model_path = hamer_out_dir, debug = debug, depth_folder = depth_img_dir)
     seg_end_time = time.time()
     convert_images_to_video(segmentation_out_dir, framerate=30//SAMPLE_RATE)
     
@@ -124,9 +124,9 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Full pipeline: extract video ➜ segment ➜ reconstruct ➜ render spheres")
-    parser.add_argument("--video_path", type=str, default = "/home/xhe71/Desktop/robotool_data/Color/", help="Path to the input video file or image folder")
+    parser.add_argument("--video_path", type=str, default = "/home/xhe71/Desktop/robotool_data/side_view/single_clift_cloth_1/cam1/rgb/", help="Path to the input video file or image folder")
     parser.add_argument("--background_img", type=str, default = None, help="Path to background image to use for replacement")
-    parser.add_argument("--depth_folder", type=str, default='/home/xhe71/Desktop/robotool_data/Depth', help="Folder with depth images matching image frames")
+    parser.add_argument("--depth_folder", type=str, default='/home/xhe71/Desktop/robotool_data/side_view/single_clift_cloth_1/cam1/depth/', help="Folder with depth images matching image frames")
     parser.add_argument("--intrinsics_path", type=str, default='camera_intrinsics_zed.json', help="Path to camera intrinsics .json file")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode with full rendering and mesh saving")
     args = parser.parse_args()
