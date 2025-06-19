@@ -93,16 +93,32 @@ def apply_icp(source_points, target_points, threshold=0.01):
 def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, camera_intrinsics):
     # Flip and scale
     hamer_vertices = hamer_vertices.copy()
-    hamer_vertices[:, 1] *= -1
-    hamer_vertices[:, 2] *= -1
 
+    # filter out the points with unreasonable depth < 0.2 m and > 2m
+    valid_points = hand_point_cloud[
+    (hand_point_cloud[:, 2] > 0.2) & (hand_point_cloud[:, 2] < 2)]
+    hand_point_cloud = valid_points
+    # print(f"💡hamer: {len(hamer_vertices)} points", f"💡 Point cloud size: {hand_point_cloud.shape[0]} points")
     # Z alignment
     if hand_point_cloud.shape[0] > 0:
+        # Only keep points with reasonable Z values (in meters)
+        valid_z = (hand_point_cloud[:, 2] > 0.2) & (hand_point_cloud[:, 2] < 1.5)
+        num_valid_points = np.sum(valid_z)
+        print(f"✅ Valid depth points: {num_valid_points}")
+
+        if num_valid_points < 100:
+            print("⚠️ Not enough valid depth points. Skipping alignment.")
+            return None  # or return unaligned vertices if preferred
+
+        filtered_pc = hand_point_cloud[valid_z]
+        pointcloud_z = np.percentile(filtered_pc[:, 2], 10)  # or use np.median(filtered_pc[:, 2])
         mesh_z = np.percentile(hamer_vertices[:, 2], 10)
-        pointcloud_z = np.percentile(hand_point_cloud[:, 2], 10)
         z_offset = pointcloud_z - mesh_z
         hamer_vertices[:, 2] += z_offset
-        # print("Applied Z offset:", z_offset)
+    else:
+        print("⚠️ Empty point cloud!")
+        return None
+
 
     # 2D projection
     verts_2d = project_points_to_image(hamer_vertices, camera_intrinsics)
@@ -116,6 +132,24 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, ca
         hamer_vertices[:, 1] += translation_2d[1] / camera_intrinsics['fy'] * hamer_vertices[:, 2]
     else:
         print("Warning: No valid mask contour, skipping 2D alignment.")
+
+    # Debug visualization of ICP alignment (depth point cloud, original, aligned)
+    import matplotlib.pyplot as plt
+    from mpl_toolkits.mplot3d import Axes3D
+
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    ax.scatter(hand_point_cloud[:, 0], hand_point_cloud[:, 1], hand_point_cloud[:, 2], c='b', label='Depth Point Cloud', alpha=0.3)
+    ax.scatter(hamer_vertices[:, 0], hamer_vertices[:, 1], hamer_vertices[:, 2], c='r', label='Original HAMER Vertices', alpha=0.3)
+    ax.scatter(hamer_vertices[:, 0], hamer_vertices[:, 1], hamer_vertices[:, 2], c='g', label='Aligned HAMER Vertices', alpha=0.6)
+
+    ax.set_title('ICP Alignment Debug Visualization')
+    ax.set_xlabel('X')
+    ax.set_ylabel('Y')
+    ax.set_zlabel('Z')
+    ax.legend()
+    plt.tight_layout()
+    # plt.show()
 
     return hamer_vertices
 

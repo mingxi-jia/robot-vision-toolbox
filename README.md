@@ -38,10 +38,41 @@ Besides these files, you also need to download the MANO model. Please visit the 
 # Pipeline: detect hand and replace with disco ball
 ```
 python pipeline.py 
---video_path: YOUR_VIDEO_PATH
+--video_path YOUR_VIDEO_PATH (or image folder path <-- preferred)
+--depth_folder YOUR_DEPTH_PATH
 --background_img: PATH_TO_ENVIRONMENT_IMAGE [If none, use the first frame of the video as the background]
---handedness: [default to "left"]
+--intrinsics_path CAMERA_INTRINSICS_JSON
+--debug 
+
 ```
+
+```
+side note: adjust the following parameters if needed
+pipeline.py | [line 18] | SAMPLE_RATE = 3 by default 
+human_pose_segmentor_mp_sam.py | [line 281] | top 2/5 is cropped
+```
+
+## Example: intrinsics json
+{
+    "width": 640,
+    "height": 360,
+    "fx": 261.2876281738281,
+    "fy": 261.2876281738281,
+    "cx": 316.0948791503906,
+    "cy": 177.75343322753906,
+    "distortion_model": "rational_polynomial",
+    "distortion_coefficients": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+    ]
+}
+
 ## 📁 Output Folder Structure
 After running the processing pipeline on a video (e.g., video.mp4), the following folder structure will be created in the same directory:
 
@@ -50,6 +81,7 @@ video.mp4
 ├── video_hamer/        # 3D hand pose results (from HaMeR), includes meshes and pose JSON
 ├── video_segmented/    # Segmented hands or objects from each frame
 ├── video_final/        # Final visualizations with overlays (e.g., hand mesh, spheres, segmentation)
+
 
 ## substeps
 ### 1. preprocess video

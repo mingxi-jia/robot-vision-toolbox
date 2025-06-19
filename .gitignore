@@ -23,3 +23,4 @@ hamer_detector/segmentation_output/list.txt
 hamer_detector/sphere_overlay/images.txt
 hamer_detector/tmp_imgs/list.txt
 list.txt
+human_segmentor/.test.py

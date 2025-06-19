@@ -271,7 +271,17 @@ def interpolate_dropped_frames(frame_ids, cam_ts, rot_mats, all_frame_ids):
 
 def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     with open(json_path, "r") as f:
-        data = json.load(f)
+        all_hand_results = json.load(f)
+
+    # Count handedness
+    right_count = sum(1 for v in all_hand_results.values() if v['is_right'])
+    left_count = sum(1 for v in all_hand_results.values() if not v['is_right'])
+    majority_is_right = right_count >= left_count
+
+    # Remove minority handedness
+    all_hand_results = {k: v for k, v in all_hand_results.items() if v['is_right'] == majority_is_right}
+
+    data = all_hand_results
 
     sorted_items = sorted(data.items(), key=lambda x: int(''.join(filter(str.isdigit, x[0]))))
 
@@ -297,6 +307,12 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
             rot_mat = np.array(v["global_orient"])
             if rot_mat.shape != (3, 3):
                 raise ValueError(f"Invalid rotation matrix shape for frame {fid}: {rot_mat.shape}")
+            U, _, Vt = np.linalg.svd(rot_mat)
+            rotmat_fixed = U @ Vt
+            if np.linalg.det(rotmat_fixed) < 0:
+                U[:, -1] *= -1
+                rotmat_fixed = U @ Vt
+            rot_mat = rotmat_fixed
             raw_cam_ts.append(cam_t)
             raw_rot_mats.append(rot_mat)
             raw_frame_ids.append(fid)
@@ -309,7 +325,6 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     for i in range(1, len(raw_cam_ts)):
         delta_t = np.linalg.norm(raw_cam_ts[i] - raw_cam_ts[i - 1])
         trans_deltas.append(delta_t)
-
         delta_rot = R.from_matrix(raw_rot_mats[i - 1]).inv() * R.from_matrix(raw_rot_mats[i])
         angle_rad = np.linalg.norm(delta_rot.as_rotvec())
         angle_deg = np.degrees(angle_rad)

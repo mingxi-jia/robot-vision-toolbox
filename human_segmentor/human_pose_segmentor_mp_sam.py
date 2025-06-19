@@ -63,26 +63,8 @@ def compute_landmark_flow(prev_frame, curr_frame, prev_landmarks):
     return good_prev, good_next
 
 
-def warp_mask_with_optical_flow(prev_frame, current_frame, prev_mask):
-    prev_gray = cv2.cvtColor(prev_frame, cv2.COLOR_BGR2GRAY)
-    curr_gray = cv2.cvtColor(current_frame, cv2.COLOR_BGR2GRAY)
-
-    flow = cv2.calcOpticalFlowFarneback(prev_gray, curr_gray, None,
-                                        pyr_scale=0.5, levels=3, winsize=15,
-                                        iterations=3, poly_n=5, poly_sigma=1.2, flags=0)
-
-    h, w = prev_mask.shape
-    flow_map = np.stack(np.meshgrid(np.arange(w), np.arange(h)), axis=-1).astype(np.float32)
-    remap = (flow_map + flow).astype(np.float32)
-    warped_mask = cv2.remap(prev_mask.astype(np.float32), remap[..., 0], remap[..., 1], interpolation=cv2.INTER_LINEAR)
-    warped_mask = (warped_mask > 0.5).astype(np.uint8)
-
-    return warped_mask, flow
-
-
-
 #     return image, sampled_points, annotated_image, segmentation_mask
-def extract_segmentation_points(image_path, num_points=10):
+def extract_segmentation_points(image_path):
     """
     Extracts pose landmarks and segmentation mask from an image using MediaPipe.
     Keeps only the largest connected region in the mask.
@@ -166,17 +148,27 @@ def extract_segmentation_points(image_path, num_points=10):
     # cv2.imshow("landmarks", annotated_image)
     # cv2.waitKey(1)
     return image, sampled_points, annotated_image, largest_mask
-def extend_arm_from_depth(hand_mask, depth_image, max_arm_length=100, depth_tolerance=100):
+
+def extend_arm_from_depth(hand_mask, depth_image, max_arm_length=300, depth_tolerance_ratio=0.05):
     """
     Grows a region from the hand mask in the depth image to estimate arm area.
+
+    Args:
+        hand_mask (np.ndarray): Binary mask indicating hand region.
+        depth_image (np.ndarray): Depth image (in meters or millimeters).
+        max_arm_length (int): Max number of pixels to grow.
+        depth_tolerance_ratio (float): Percentage tolerance relative to starting depth (e.g. 0.05 = 5%).
+
+    Returns:
+        np.ndarray: Binary mask of the extended arm region.
     """
     h, w = hand_mask.shape
     arm_mask = np.zeros_like(hand_mask, dtype=np.uint8)
 
-    # 1. Find starting point from hand mask
+    # Find starting point from hand mask
     ys, xs = np.where(hand_mask > 0)
     if len(xs) == 0:
-        return arm_mask  # Empty
+        return arm_mask  # No hand detected
 
     start_y = int(np.mean(ys))
     start_x = int(np.mean(xs))
@@ -185,27 +177,41 @@ def extend_arm_from_depth(hand_mask, depth_image, max_arm_length=100, depth_tole
     if start_depth == 0:
         return arm_mask  # Invalid depth
 
-    # 2. BFS-style region growing
-    visited = np.zeros_like(hand_mask, dtype=bool)
-    queue = [(start_y, start_x)]
-    arm_mask[start_y, start_x] = 1
-    visited[start_y, start_x] = True
+    # Compute dynamic tolerance window
+    depth_tolerance = depth_tolerance_ratio * start_depth
+    lower_bound = start_depth - depth_tolerance
+    upper_bound = start_depth + depth_tolerance
+    # Convert depth to grayscale if needed
+    if len(depth_image.shape) == 3:
+        depth_gray = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+    else:
+        depth_gray = depth_image.copy()
 
-    count = 0
-    while queue and count < max_arm_length:
-        y, x = queue.pop(0)
-        count += 1
-        for dy in [-1, 0, 1]:
-            for dx in [-1, 0, 1]:
-                ny, nx = y + dy, x + dx
-                if 0 <= ny < h and 0 <= nx < w and not visited[ny, nx]:
-                    d = depth_image[ny, nx]
-                    if d != 0 and abs(int(d) - int(start_depth)) < depth_tolerance:
-                        visited[ny, nx] = True
-                        arm_mask[ny, nx] = 1
-                        queue.append((ny, nx))
+    # Threshold depth
+    in_range_mask = (
+        (depth_gray >= lower_bound) &
+        (depth_gray <= upper_bound) &
+        (depth_gray > 0)
+    ).astype(np.uint8)
+
+    # Connected components
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(in_range_mask, connectivity=8)
+
+    # Select component that overlaps with hand
+    selected_label = None
+    for label_id in range(1, num_labels):
+        component_mask = (labels == label_id).astype(np.uint8)
+        overlap = cv2.bitwise_and(component_mask, hand_mask)
+        if np.any(overlap):
+            selected_label = label_id
+            break
+
+    if selected_label is not None:
+        arm_mask[labels == selected_label] = 1
 
     return arm_mask
+
+
 def segment_human(image, sampled_points):
     """
     Uses SAM2 to refine segmentation using evenly sampled points from MediaPipe's segmentation mask.
@@ -270,12 +276,41 @@ def replace_background(image, mask, reference_image):
     result_image = image.copy()
     result_image[mask == 1] = reference_resized[mask == 1]  # Replace background pixels
 
-    # Replace the top 1/3 of the image with the reference background
+    # Replace the top 12/5 of the image with the reference background
     height = image.shape[0]
     top_section = 2*height // 5  # Calculate the height for top 1/3
     result_image[:top_section, :] = reference_resized[:top_section, :]  # Replace top section
 
     return result_image
+
+def sample_mask_points(hand_mask, num_points=10):
+    """
+    Samples points from a hand mask and visualizes them.
+
+    Args:
+        hand_mask (np.ndarray): Binary or grayscale hand mask (0–255).
+        num_points (int): Number of points to sample.
+
+    Returns:
+        np.ndarray or None: Sampled (x, y) point coordinates.
+    """
+    if hand_mask is None:
+        print("⚠️ No hand mask provided.")
+        return None
+
+    # Ensure binary mask and dilate
+
+    # Get foreground pixel coordinates
+    ys, xs = np.where(hand_mask > 0)
+    if len(xs) == 0:
+        print("⚠️ No foreground pixels in mask.")
+        return None
+
+    # Sample random indices
+    indices = np.random.choice(len(xs), size=min(num_points, len(xs)), replace=False)
+    sampled_points = np.stack([xs[indices], ys[indices]], axis=1)
+
+    return sampled_points
 
 def process_image_folder(image_folder, output_folder, background_path=None, hand_model_path = None, debug = True, depth_folder = None):
     """
@@ -294,7 +329,14 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
     depth_paths = sorted([
         os.path.join(depth_folder, f)
         for f in os.listdir(depth_folder)
-        if f.endswith(('.npy', '.png'))
+        if f.endswith('.npy')
+    ])
+
+    if len(depth_paths) < 1:
+        depth_paths = sorted([
+        os.path.join(depth_folder, f)
+        for f in os.listdir(depth_folder)
+        if f.endswith('.png')
     ])
     if background_path is not None:
         reference_image = cv2.imread(background_path)
@@ -304,20 +346,18 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
         reference_image = None
 
     prev_frame = None
-    prev_mask = None
     prev_landmarks = None
 
     for idx, image_path in enumerate(image_paths):
         frame = cv2.imread(image_path)
         
-        depth_image = cv2.imread(depth_paths[idx])
+        depth_image = np.load(depth_paths[idx])
         frame_count = int(image_paths[idx][-10:-4])
-        # frame_count = idx  # Use index for naming
 
         final_output_path = os.path.join(output_folder, f"frame_{frame_count:06d}_final.png")
+        final_debug_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_final[DEBUG].png")
         landmark_flow = None
 
-        image, sampled_points, annotated_image, mediapipe_mask = extract_segmentation_points(frame)
         height, width = frame.shape[:2]
         # Load and sample hand mask points before SAM2
         suffix = f"{frame_count:06d}_handmask.png"
@@ -326,201 +366,113 @@ def process_image_folder(image_folder, output_folder, background_path=None, hand
         if matching_files:
             mask_path = os.path.join(hand_model_path, matching_files[0])
             hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-
-        if hand_mask is not None:
-            hand_mask = (hand_mask > 127).astype(np.uint8)
-            print(f"✔️ Loaded hand mask for frame {frame_count}")
-            kernel = np.ones((5, 5), np.uint8)
-            dilated_mask = cv2.dilate(hand_mask, kernel, iterations=1)
-            ys, xs = np.where(dilated_mask > 0)
-            if len(xs) > 0:
-                indices = np.random.choice(len(xs), size=min(10, len(xs)), replace=False)
-                hand_sampled = np.stack([xs[indices], ys[indices]], axis=1)
-                if sampled_points is not None:
-                    sampled_points = np.vstack([sampled_points, hand_sampled])
-                # ✅ If MediaPipe failed or gave too few points, try depth-based extension
-        need_depth_extension = (
-            mediapipe_mask is None or 
-            sampled_points is None or 
-            len(sampled_points) < 6
-        )
-
-        if need_depth_extension and depth_image is not None:
-            print(f"🔄 Frame {frame_count}: Trying to extend arm using depth...")
-
-            if len(depth_image.shape) == 3:
-                depth_gray = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
-            else:
-                depth_gray = depth_image
-
-            arm_mask = extend_arm_from_depth(hand_mask, depth_gray, max_arm_length=300, depth_tolerance=100)
-
-            ys_arm, xs_arm = np.where(arm_mask > 0)
-            if len(xs_arm) > 0:
-                arm_indices = np.random.choice(len(xs_arm), size=min(15, len(xs_arm)), replace=False)
-                arm_sampled = np.stack([xs_arm[arm_indices], ys_arm[arm_indices]], axis=1)
-
-                print(f"➕ Frame {frame_count}: Added {len(arm_sampled)} arm points from depth.")
-                if sampled_points is not None:
-                    sampled_points = np.vstack([sampled_points, arm_sampled])
-                else:
-                    sampled_points = arm_sampled
-                    # ✅ If MediaPipe failed or gave too few points, try depth-based extension
-        need_depth_extension = (
-            mediapipe_mask is None or 
-            sampled_points is None or 
-            len(sampled_points) < 6
-        )
-
-        if need_depth_extension and depth_image is not None:
-            print(f"🔄 Frame {frame_count}: Trying to extend arm using depth...")
-
-            if len(depth_image.shape) == 3:
-                depth_gray = cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
-            else:
-                depth_gray = depth_image
-
-            arm_mask = extend_arm_from_depth(hand_mask, depth_gray, max_arm_length=300, depth_tolerance=100)
-
-            ys_arm, xs_arm = np.where(arm_mask > 0)
-            if len(xs_arm) > 0:
-                arm_indices = np.random.choice(len(xs_arm), size=min(15, len(xs_arm)), replace=False)
-                arm_sampled = np.stack([xs_arm[arm_indices], ys_arm[arm_indices]], axis=1)
-
-                print(f"➕ Frame {frame_count}: Added {len(arm_sampled)} arm points from depth.")
-                if sampled_points is not None:
-                    sampled_points = np.vstack([sampled_points, arm_sampled])
-                else:
-                    sampled_points = arm_sampled
-        if mediapipe_mask is not None:
-            valid_region_mask = np.zeros_like(mediapipe_mask, dtype=np.uint8)
-            valid_region_mask[int(height * (1 / 3)):, :] = 1
-        else:
-            valid_region_mask = np.ones((height, width), dtype=np.uint8)
-
-        if sampled_points is not None:
-            segmentation_mask = segment_human(image, sampled_points)
-            refined_mask = segmentation_mask.copy()
-
-            masked_mp = np.logical_and(mediapipe_mask, valid_region_mask)
-            masked_sam = np.logical_and(segmentation_mask, valid_region_mask)
-
-            mp_area = np.sum(masked_mp)
-            
-            sam_area = np.sum(masked_sam)
-
-            min_mask_area = 500
-            use_mp_mask = False
-
-            if mp_area < min_mask_area:
-                print(f"⚠️ Frame {frame_count}: MediaPipe mask too small (area={mp_area}) — skipping.")
-            else:
-                intersection = np.logical_and(masked_sam, masked_mp).sum()
-                union = np.logical_or(masked_sam, masked_mp).sum()
-                iou = intersection / union if union > 0 else 0
-                print(f"ℹ️ Frame {frame_count}: IoU = {iou:.2f}")
-
-                if iou < 0.1:
-                    print(f"⚠️ Frame {frame_count}: Low IoU — using MediaPipe mask instead.")
-                    refined_mask = mediapipe_mask.copy()
-                    use_mp_mask = True
-
-            if np.sum(np.logical_and(refined_mask, valid_region_mask)) < min_mask_area and not use_mp_mask:
-                print(f"❌ Frame {frame_count}: Both SAM2 and MP failed — using optical flow fallback.")
-                if prev_frame is not None and prev_mask is not None:
-                    refined_mask, _ = warp_mask_with_optical_flow(prev_frame, frame, prev_mask)
-
-            # merge mask with Mano hand model
-            # Find file that ends with the expected handmask suffix
-            suffix = f"{frame_count:06d}_handmask.png"
-            matching_files = [f for f in os.listdir(hand_model_path) if f.endswith(suffix)]
-            if matching_files:
-                mask_path = os.path.join(hand_model_path, matching_files[0])
-                hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            else:
-                hand_mask = None
-                
             if hand_mask is not None:
                 hand_mask = (hand_mask > 127).astype(np.uint8)
-                print(f"✔️ Loaded hand mask for frame {frame_count}")
-                # Apply dilation
-                kernel_size = 5  # Adjust for how much wider you want it
-                iterations = 1   # Number of dilation passes
+                ys, xs = np.where(hand_mask > 0)
+        else:
+            continue
 
-                kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                dilated_mask = cv2.dilate(hand_mask, kernel, iterations=iterations)
+        # Use MediaPipe to get pose landmarks (arm points)
+        image, mp_sampled_points, _, mediapipe_mask = extract_segmentation_points(frame)
 
-                # Combine with refined human mask
-                refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
-                
-            # cv2.imshow("mask", refined_mask*255)
-            # cv2.waitKey(0)
-            # merge hand mask into refined mask
-            final_result = replace_background(image, refined_mask, reference_image) if reference_image is not None else frame.copy()
+        # sample some points from loaded hand_mask
+        hand_sampled_points = sample_mask_points(hand_mask, num_points = 5)
 
 
-            if prev_frame is not None and prev_landmarks is not None:
-                good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
-                if len(good_prev) > 0:
-                    landmark_flow = (good_prev, good_next)
+        # Decide whether to trust MediaPipe or fall back to depth
+        use_depth_arm = False
+        if hand_mask is not None and mediapipe_mask is not None:
+            overlap = cv2.bitwise_and(hand_mask, mediapipe_mask)
+            if not np.any(overlap):
+                print("⚠️ No overlap between hand mask and MediaPipe mask — using depth to find arm.")
+                use_depth_arm = True
 
-            prev_frame = frame.copy()
-            prev_mask = refined_mask.copy()
-            prev_landmarks = sampled_points.copy()
-            if debug:
-                mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
-                cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
-            cv2.imwrite(final_output_path, final_result)
+        if use_depth_arm:
+            arm_mask = extend_arm_from_depth(hand_mask, depth_image, depth_tolerance_ratio = 0.1)
+            arm_sampled_points = sample_mask_points(arm_mask,num_points = 15)
+        else:
+            arm_sampled_points = mp_sampled_points
+            arm_mask = mediapipe_mask
+
+        # Get a union of all segmented points and use SAM to get the final mask
+              # Combine sampled points
+        full_sampled_points = []
+        for pts in [hand_sampled_points, arm_sampled_points]:
+            if pts is not None:
+                full_sampled_points.append(pts)
+        full_sampled_points = np.vstack(full_sampled_points) if full_sampled_points else None
+
+        final_sam_mask = None
+
+        # Case 1: run SAM normally
+        if full_sampled_points is not None and len(full_sampled_points) >= 4:
+            final_sam_mask = segment_human(frame, full_sampled_points)
+
+        # Case 2: fallback to optical flow
+        elif prev_frame is not None and prev_landmarks is not None:
+            good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
+            if len(good_next) >= 4:
+                full_sampled_points = good_next.astype(int)
+                print("🌀 Using optical flow fallback points.")
+                final_sam_mask = segment_human(frame, full_sampled_points)
+            else:
+                print("❌ Optical flow fallback also failed.")
+                continue  # skip frame
 
         else:
-            print(f"⚠️ Frame {frame_count}: No pose detected — using optical flow points as input to SAM2.")
-            if prev_frame is not None and prev_landmarks is not None:
-                good_prev, good_next = compute_landmark_flow(prev_frame, frame, prev_landmarks)
-                if len(good_next) >= 4:
-                    print(f"ℹ️ Using {len(good_next)} tracked landmarks for SAM2.")
-                    segmentation_mask = segment_human(frame, good_next.astype(int))
-                    refined_mask = segmentation_mask.copy()
+            print(f"❌ Skipping frame {frame_count} — no fallback available.")
+            continue
 
-                    # merge mask with Mano hand model
-                    # mask_path = os.path.join(hand_model_path, f"frame_{frame_count:06d}_handmask.png")
-                    suffix = f"{frame_count:06d}_handmask.png"
-                    matching_files = [f for f in os.listdir(hand_model_path) if f.endswith(suffix)]
-                    if matching_files:
-                        mask_path = os.path.join(hand_model_path, matching_files[0])
-                        hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-                    else:
-                        hand_mask = None
-                    # hand_mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
-                    if hand_mask is not None:
-                        hand_mask = (hand_mask > 127).astype(np.uint8)
-                        print(f"✔️ Loaded hand mask for frame {frame_count}")
-                        # Apply dilation
-                        kernel_size = 5  # Adjust for how much wider you want it
-                        iterations = 1   # Number of dilation passes
+        final_result = replace_background(frame, final_sam_mask, reference_image) if reference_image is not None else frame.copy()
 
-                        kernel = np.ones((kernel_size, kernel_size), np.uint8)
-                        dilated_mask = cv2.dilate(hand_mask, kernel, iterations=iterations)
+        cv2.imwrite(final_output_path, final_result)
 
-                        # Combine with refined human mask
-                        refined_mask = np.logical_or(refined_mask, dilated_mask).astype(np.uint8)
-                    if debug:
-                        mask_output_path = os.path.join(output_folder, f"debug_frame_{frame_count:06d}_mask.png")
-                        cv2.imwrite(mask_output_path, (refined_mask * 255).astype(np.uint8))
-                    final_result = replace_background(frame, refined_mask, reference_image) if reference_image is not None else frame.copy()
+        # DEBUG:
+        if debug:
 
-                    cv2.imwrite(final_output_path, final_result)
+            fig, axs = plt.subplots(2, 2, figsize=(14, 10))  # 2x2 grid
 
-                    prev_frame = frame.copy()
-                    prev_mask = refined_mask.copy()
-                    prev_landmarks = good_next.copy()
-                else:
-                    print(f"❌ Frame {frame_count}: Not enough flow-tracked landmarks — skipping.")
-                    continue
-            else:
-                print(f"❌ Skipping frame {frame_count} — no previous pose/landmarks.")
-                continue
+            # Fig 1: Original RGB image
+            axs[0, 0].imshow(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
+            axs[0, 0].set_title("Original Image")
+            axs[0, 0].axis('off')
 
-    print("✅ Image folder processing complete.")
+            # Fig 2: Depth image
+            depth_vis = depth_image if depth_image.ndim == 2 else cv2.cvtColor(depth_image, cv2.COLOR_BGR2GRAY)
+            axs[0, 1].imshow(depth_vis, cmap='gray')
+            axs[0, 1].set_title("Depth Image")
+            axs[0, 1].axis('off')
+
+            # Fig 3: Combined sample points and masks
+            overlay_img = cv2.cvtColor(frame.copy(), cv2.COLOR_BGR2RGB)
+            axs[1, 0].imshow(overlay_img)
+            if mp_sampled_points is not None:
+                axs[1, 0].scatter(mp_sampled_points[:, 0], mp_sampled_points[:, 1], color='green', label='Pose')
+            if hand_sampled_points is not None:
+                axs[1, 0].scatter(hand_sampled_points[:, 0], hand_sampled_points[:, 1], color='red', label='Hand')
+            if arm_sampled_points is not None:
+                axs[1, 0].scatter(arm_sampled_points[:, 0], arm_sampled_points[:, 1], color='blue', label='Arm')
+            axs[1, 0].set_title("Sample Points on Mask Overlay")
+            axs[1, 0].axis('off')
+            axs[1, 0].legend(loc='lower right', fontsize='small')
+
+            # Also draw semi-transparent masks on top
+            combined_mask = np.zeros_like(frame[:, :, 0], dtype=np.uint8)
+            if hand_mask is not None:
+                combined_mask[hand_mask > 0] = 100
+            if arm_mask is not None:
+                combined_mask[arm_mask > 0] += 150  # additive to show overlap as brighter
+            axs[1, 0].imshow(combined_mask, cmap='hot', alpha=0.4)
+
+            # Fig 4: Final SAM mask
+            axs[1, 1].imshow((final_sam_mask if final_sam_mask is not None else np.zeros_like(frame[:, :, 0])) * 255, cmap='gray')
+            axs[1, 1].set_title("Final SAM Mask")
+            axs[1, 1].axis('off')
+
+            plt.tight_layout()
+            plt.savefig(final_debug_output_path, dpi=300, bbox_inches='tight')
+
+
 
 # image_folder = "/home/xhe71/Desktop/robotool_data/Color_frames"
 # output_folder = "/home/xhe71/Desktop/robotool_data/Color_segmented"

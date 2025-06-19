@@ -21,9 +21,7 @@ import json
 from typing import Dict, Optional
 
 def detect_hand(args):
-    # The above code is not complete and seems to be missing the actual code or context. It appears to
-    # be a variable name `min_score` followed by some comment characters `
-    min_score = 0.8
+    min_score = 0.85
     with open(args.intrinsics_path, 'r') as f:
         camera_intrinsics = json.load(f)
 
@@ -213,9 +211,9 @@ def detect_hand(args):
                 # Get predicted global rotation
                 global_orient = out['pred_mano_params']['global_orient'][n].detach().contiguous().cpu().numpy()[0]
                 # # Handedness correction for global_orient
-                if not is_right:
-                    global_orient[:,0] *= -1
-                    global_orient[:,2] *= -1
+                # if not is_right:
+                #         M = np.diag([-1, 1, 1])  # mirror across X axis
+                #         global_orient = M @ global_orient
 
                 # Save to batch dictionary
                 hand_key = f"{img_fn}"
@@ -256,9 +254,19 @@ def detect_hand(args):
             hamer_vertices = np.vstack(all_verts)
             hand_point_cloud = extract_hand_point_cloud(hand_mask, depth_img, camera_intrinsics)
             hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, hand_mask, camera_intrinsics)
-            translation = hamer_aligned.mean(axis=0)
-            all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
-            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+            if hamer_aligned is None:
+                print(f"⏭️  Skipping frame {hand_key} due to poor depth quality.")
+                # Remove corresponding entry in all_hand_results if frame is skipped
+                if hand_key in all_hand_results:
+                    del all_hand_results[hand_key]
+                continue
+            else:
+                translation = hamer_aligned.mean(axis=0)
+                print(f"--> 1) original transition Z = {all_hand_results[hand_key]['pred_cam_t'][2]} flipped Z = {translation[2]}")
+                
+                all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
+                
+                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
             # Overlay image
             if args.debug:
                 # Save binary mask of rendered hand (from alpha channel)
@@ -273,12 +281,20 @@ def detect_hand(args):
             hamer_vertices = np.vstack(all_verts)
             hand_point_cloud = extract_hand_point_cloud(dummy_mask, depth_img, camera_intrinsics)
             hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, dummy_mask, camera_intrinsics)
-            translation = hamer_aligned.mean(axis=0)
-            all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
+            if hamer_aligned is None:
+                print(f"⏭️  Skipping frame {hand_key} due to poor depth quality.")
+                # Remove corresponding entry in all_hand_results if frame is skipped
+                if hand_key in all_hand_results:
+                    del all_hand_results[hand_key]
+                continue
+            else:
+                translation = hamer_aligned.mean(axis=0)
+                print(f"--> 2) original transition Z = {all_hand_results[hand_key]['pred_cam_t'][2]} flipped Z = {translation[2]}")
+                all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
 
     with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
-        json.dump(all_hand_results, f, indent=2)
-
+        # json.dump(all_hand_results, f, indent=2)
+        json.dump(dict(sorted(all_hand_results.items())), f, indent=2)
     # Cleanup
     cv2.destroyAllWindows()
     # Free large arrays
@@ -300,6 +316,6 @@ if __name__ == '__main__':
     parser.add_argument('--rescale_factor', type=float, default=1.0, help='Factor for padding the bbox')
     parser.add_argument('--body_detector', type=str, default='regnety', choices=['vitdet', 'regnety'], help='Using regnety improves runtime and reduces memory')
     parser.add_argument('--file_type', nargs='+', default=['*.jpg', '*.png'], help='List of file extensions to consider')
-    parser.add_argument('--debug', action='store_false', help='If set, enables full rendering and saves overlay/mask outputs')
+    parser.add_argument('--debug', action='store_true', help='If set, enables full rendering and saves overlay/mask outputs')
     args = parser.parse_args()
     detect_hand(args)
