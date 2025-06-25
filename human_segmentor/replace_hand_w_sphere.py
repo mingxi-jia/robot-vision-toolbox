@@ -40,29 +40,21 @@ def add_sphere(r = 0.06):
     sphere.metadata["type"] = "sphere"
     return sphere
 
+def transform_mesh(mesh, translation, rotation_matrix=None):
+    # Removed the extra rotation block for sphere
 
-def transform_mesh(mesh, translation, rotation_matrix = None, rot_axis=[1, 0, 0], rot_angle=0):
-    if rotation_matrix is not None:
-        rot4x4 = np.eye(4)
-        if len(rotation_matrix) > 0:
-            rot4x4[:3, :3] = rotation_matrix
-
-        # If mesh is a sphere, rotate it to match HaMeR hand orientation
+    if rotation_matrix is not None and len(rotation_matrix) > 0:
         if mesh.metadata.get("type") == "sphere":
-            align = trimesh.transformations.rotation_matrix(np.radians(0), [1, 0, 0])
-            mesh.apply_transform(align)
-
-        mesh.apply_transform(rot4x4)
-
-    # # Optional additional rotation
-    # rot = trimesh.transformations.rotation_matrix(np.radians(rot_angle), rot_axis)
-    # mesh.apply_transform(rot)
-
-    # Flip upside down (180 degrees around X-axis)
-    # flip_matrix = trimesh.transformations.rotation_matrix(
-    #     np.radians(180), [1, 0, 0]
-    # )
-    # mesh.apply_transform(flip_matrix)
+            # Flip rotation by applying 180 deg around Z axis before rotation_matrix
+            # flip_rot = trimesh.transformations.rotation_matrix(np.pi, [0, 0, 1])
+            rot4x4 = np.eye(4)
+            rot4x4[:3, :3] = rotation_matrix
+            total_rot = rot4x4
+            mesh.apply_transform(total_rot)
+        else:
+            rot4x4 = np.eye(4)
+            rot4x4[:3, :3] = rotation_matrix
+            mesh.apply_transform(rot4x4)
 
     # Apply translation
     trans_matrix = trimesh.transformations.translation_matrix(translation)
@@ -89,7 +81,7 @@ def render_rgba_multiple(
 
     # renderer is now passed in from outside and reused
 
-    transformed_mesh = transform_mesh(mesh, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
+    transformed_mesh = transform_mesh(mesh, cam_t, rot_matrix)
 
     scene = pyrender.Scene(bg_color=[*scene_bg_color, 0.0],
                             ambient_light=(0.4, 0.3, 0.3))
@@ -156,8 +148,8 @@ def render_rgba_multiple(
         x_arrow = make_axis_arrow((0, 1, 0), 'x')    # Green X
         y_arrow = make_axis_arrow((0, 0.6, 1), 'y')  # Blue Y
         for arr in [z_arrow, x_arrow, y_arrow]:
-            arr = transform_mesh(arr, cam_t, rot_matrix, rot_axis=[1, 0, 0], rot_angle=0)
-            arrow_mesh = pyrender.Mesh.from_trimesh(arr, smooth=False)
+            transformed_arrow = transform_mesh(arr.copy(), cam_t, rot_matrix)
+            arrow_mesh = pyrender.Mesh.from_trimesh(transformed_arrow, smooth=False)
             scene.add(arrow_mesh)
     
     color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
@@ -171,7 +163,7 @@ def replace_sphere(mesh_folder, image_folder, output_folder, intrinsics_path, de
     import json
     from multiprocessing import Pool
     os.makedirs(output_folder, exist_ok=True)
-    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_final.png")])
+    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_final.jpg")])
     first_image_path = os.path.join(image_folder, image_files[0])
     image = cv2.imread(first_image_path)
     height, width, _ = image.shape
@@ -212,17 +204,23 @@ def process_frame(fname, image_folder, output_folder, camera_intrinsics, hand_da
     cam_t = np.array(hand_data[matched_key]["pred_cam_t"])
     rot_mat = np.array(hand_data[matched_key]['global_orient'][0])
 
+    # Apply flip rotation to rot_mat
+    flip_rot = trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0])
+    rot4x4 = np.eye(4)
+    rot4x4[:3, :3] = rot_mat
+    flipped_rot_mat = (flip_rot @ rot4x4)[:3, :3]
+
     misc_args = dict(
         mesh_base_color=LIGHT_BLUE,
         scene_bg_color=(1, 1, 1),
     )
 
-    rendered_img = render_rgba_multiple(mesh, cam_t, camera_intrinsics, rot_matrix=rot_mat, render_res=[width, height], focal_length=camera_intrinsics, **misc_args, renderer=renderer, debug=debug)
+    rendered_img = render_rgba_multiple(mesh, cam_t, camera_intrinsics, rot_matrix=flipped_rot_mat, render_res=[width, height], focal_length=camera_intrinsics, **misc_args, renderer=renderer, debug=debug)
     input_img = img.astype(np.float32)[:, :, ::-1] / 255.0
     input_img = np.concatenate([input_img, np.ones_like(input_img[:, :, :1])], axis=2)
     input_img_overlay = input_img[:, :, :3] * (1 - rendered_img[:, :, 3:]) + rendered_img[:, :, :3] * rendered_img[:, :, 3:]
     rgb_img = 255 * input_img_overlay[:, :, ::-1]
-    cv2.imwrite(os.path.join(output_folder, f'{frame_id}_final.jpg'), cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
+    cv2.imwrite(os.path.join(output_folder, f'frame_{frame_id}_final.jpg'), cv2.cvtColor(rgb_img, cv2.COLOR_RGB2BGR))
 
 if __name__ == "__main__":
 

@@ -5,12 +5,17 @@ from pykalman import KalmanFilter
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 import os
+from scipy.signal import medfilt
 
 # === Global smoothing settings ===
 # for sample rate less that 3
 SMOOTH_PARAMS = {
     "trans_noise": 5e-6,
     "obs_noise": 1e-4,
+}
+SMOOTH_PARAMS = {
+    "trans_noise": 1e-6,
+    "obs_noise": 1e-3,
 }
 # SMOOTH_PARAMS = {
 #     "trans_noise": 1e-4,
@@ -22,6 +27,25 @@ ORIENT_SMOOTH_PARAMS = {
     "trans_noise": 1e-4,
     "obs_noise": 1e-5,
 }
+
+
+# === Weighted Moving Average ===
+def weighted_moving_average(data, window_size=3, weights=None):
+    """
+    Apply weighted moving average to a 2D array (N, D), returns same shape.
+    """
+    if weights is None:
+        weights = np.linspace(1, 0.5, window_size)
+    weights /= weights.sum()  # Normalize
+
+    smoothed = []
+    for i in range(len(data)):
+        start = max(0, i - window_size + 1)
+        window = data[start:i+1]
+        w = weights[-len(window):]
+        weighted_avg = np.average(window, axis=0, weights=w)
+        smoothed.append(weighted_avg)
+    return np.array(smoothed)
 
 def make_rotation_vectors_continuous(rot_vecs):
     # rot_vecs: (N, 3)
@@ -39,15 +63,24 @@ def make_rotation_vectors_continuous(rot_vecs):
 
 
 def smooth_3d_sequence(data):
+    initial_state = np.hstack([data[0], [0, 0, 0]])  # [x, y, z, vx, vy, vz]
+
+    transition_matrix = np.block([
+        [np.eye(3), np.eye(3)],       # position update: x_new = x_old + v
+        [np.zeros((3, 3)), np.eye(3)] # constant velocity model
+    ])
+    observation_matrix = np.hstack([np.eye(3), np.zeros((3, 3))])  # observe only position
+
     kf = KalmanFilter(
-        initial_state_mean=data[0],
-        transition_matrices=np.eye(3),
-        observation_matrices=np.eye(3),
-        transition_covariance=SMOOTH_PARAMS["trans_noise"] * np.eye(3),
+        initial_state_mean=initial_state,
+        transition_matrices=transition_matrix,
+        observation_matrices=observation_matrix,
+        transition_covariance=SMOOTH_PARAMS["trans_noise"] * np.eye(6),
         observation_covariance=SMOOTH_PARAMS["obs_noise"] * np.eye(3)
     )
+
     smoothed, _ = kf.smooth(data)
-    return smoothed
+    return smoothed[:, :3]  # Return only position
 
 def smooth_orientation_sequence(rot_vecs):
     kf = KalmanFilter(
@@ -272,7 +305,7 @@ def interpolate_dropped_frames(frame_ids, cam_ts, rot_mats, all_frame_ids):
 def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     with open(json_path, "r") as f:
         all_hand_results = json.load(f)
-
+    rootpath = os.path.dirname(json_path)
     # Count handedness
     right_count = sum(1 for v in all_hand_results.values() if v['is_right'])
     left_count = sum(1 for v in all_hand_results.values() if not v['is_right'])
@@ -287,7 +320,7 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
     # Remove leading frames with low score
     trimmed_items = []
-    trim_threshold = 0.85
+    trim_threshold = 0.70
     found_valid_start = False
     for k, v in sorted_items:
         score = v.get("score", 0.0)
@@ -346,7 +379,7 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
     plt.suptitle("Raw Frame-to-Frame Pose Change")
     plt.tight_layout()
-    plt.savefig("debug_raw_pose_jump_plot.png", dpi=300)
+    plt.savefig(os.path.join(rootpath, "debug_raw_pose_jump_plot.png"), dpi=300)
     plt.close()
 
     print(f"[INFO] Avg Δ Translation: {np.mean(trans_deltas):.4f} m")
@@ -361,14 +394,14 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
 
     update_filtering_to_per_axis(filtered_frame_ids, filtered_cam_ts, filtered_rot_mats, trimmed_items,
-                                score_threshold=0.85, max_axis_jump=0.3 * skip_rate, max_angle_jump=60)
+                                score_threshold=0.75, max_axis_jump=0.3 * skip_rate, max_angle_jump=65)
     interp_frame_ids, interp_cam_ts, interp_rot_mats = interpolate_dropped_frames(
         filtered_frame_ids, filtered_cam_ts, filtered_rot_mats, [k for k, _ in trimmed_items]
     )
 
     last_valid_t = None
     last_valid_r = None
-    score_threshold = 0.8
+    score_threshold = 0.7
     max_trans_jump = 0.5 * skip_rate   # meters
     max_angle_jump = 60    # degrees
 
@@ -434,12 +467,32 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     cam_ts = interp_cam_ts
     rot_mats = interp_rot_mats
 
+    # Apply median filtering per axis (kernel size must be odd)
+    median_cam_ts = np.stack([medfilt(interp_cam_ts[:, i], kernel_size=5) for i in range(3)], axis=1)
+    cam_ts = median_cam_ts
+
     # Build frame_ids_numeric for plotting, matching length of frame_ids
     frame_ids_numeric = [int(''.join(filter(str.isdigit, fid))) for fid in frame_ids]
     scores = np.array([data[fid].get("score", 0.0) if fid in data else 0.0 for fid in frame_ids])
 
-    # Also smooth translation with KF
-    smoothed_cam_ts = smooth_3d_sequence(cam_ts)
+    # Weighted average before KF (custom: last 3 frames, increasing weights)
+    weighted_cam_ts = []
+    weights = np.arange(1, 4)
+    weights = weights / weights.sum()
+    for i in range(len(cam_ts)):
+        if i == 0:
+            weighted_cam_ts.append(cam_ts[i])
+        elif i == 1:
+            w_avg = weights[1:] @ cam_ts[i - 1:i + 1]
+            weighted_cam_ts.append(w_avg)
+        else:
+            w_avg = weights @ cam_ts[i - 2:i + 1]
+            weighted_cam_ts.append(w_avg)
+    weighted_cam_ts = np.array(weighted_cam_ts)
+
+    # Also smooth translation with weighted moving average before KF
+    cam_ts_wma = weighted_moving_average(cam_ts, window_size=7)
+    smoothed_cam_ts = smooth_3d_sequence(weighted_cam_ts)
 
     # First apply KF to rotation vectors
     rot_vecs = R.from_matrix(rot_mats).as_rotvec()
@@ -479,8 +532,11 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
     plt.suptitle("Smoothed Frame-to-Frame Pose Change")
     plt.tight_layout()
-    plt.savefig("debug_smoothed_pose_jump_plot.png", dpi=300)
+    plt.savefig(os.path.join(rootpath,"debug_smoothed_pose_jump_plot.png"), dpi=300)
     plt.close()
+
+    # Store median_cam_ts separately for plotting
+    plotted_median_cam_ts = median_cam_ts.copy()
 
     print(f"[INFO] Smoothed Avg Δ Translation: {np.mean(trans_deltas_post):.4f} m")
     print(f"[INFO] Smoothed Avg Δ Orientation: {np.mean(angle_deltas_post):.2f} deg")
@@ -552,7 +608,9 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     replacement_flags_plot = replacement_flags[:min_len]
     for i in range(3):
         axs[i].plot(frame_ids_numeric_plot, raw_cam_ts_np_plot[:, i], label="Original", alpha=0.4, linewidth=2)
+        axs[i].plot(frame_ids_numeric_plot, weighted_cam_ts[:min_len, i], label="Weighted Avg", linestyle='--')
         axs[i].plot(frame_ids_numeric_plot, smoothed_cam_ts_plot[:, i], label="KF Smoothed", linewidth=1)
+        axs[i].plot(frame_ids_numeric_plot, plotted_median_cam_ts[:min_len, i], label="Median", linestyle='--', linewidth=1)
         axs[i].set_ylabel(f"Trans {trans_labels[i]}")
         axs[i].legend()
 
@@ -575,11 +633,11 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     axs[-1].legend()
 
     axs[-1].set_xlabel("Frame Index")
-    fig.suptitle("Translation (KF) and Orientation Smoothing")
+    fig.suptitle("Translation (Raw, Median, KF) and Orientation Smoothing")
     plt.tight_layout()
     obs_noise = SMOOTH_PARAMS["obs_noise"]
     trans_noise = SMOOTH_PARAMS["trans_noise"]
-    plt.savefig(f"combined_pose_smoothing_plot.png", dpi=300)
+    plt.savefig(os.path.join(rootpath,"combined_pose_smoothing_plot.png"), dpi=300)
     plt.close()
 
     # Save updated JSON: only filtered and smoothed frames
@@ -587,8 +645,9 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     for i, fid in enumerate(frame_ids):
         if fid in data:
             smoothed_data[fid] = data[fid]
-            smoothed_data[fid]["global_orient"] = [smoothed_rot_mats[i].tolist()]
+            # Only smooth translation, keep orientation as original (do not smooth quaternion/orientation)
             smoothed_data[fid]["pred_cam_t"] = smoothed_cam_ts[i].tolist()
+            smoothed_data[fid]["global_orient"] = [rot_mats[i].tolist()]  # Use original orientation (not smoothed)
             
     output_path = os.path.splitext(json_path)[0] + "_smoothed.json"
     with open(output_path, "w") as f:
@@ -596,4 +655,4 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
 # === Example use ===
 if __name__ == "__main__":
-    smooth_hand_pose_json_KF("/home/xhe71/Desktop/robotool_data/Color_hamer/hand_pose_camera_info.json")
+    smooth_hand_pose_json_KF("/home/xhe71/Desktop/robotool_data/06232025/slow/cam1/rgb_hamer/hand_pose_camera_info.json")

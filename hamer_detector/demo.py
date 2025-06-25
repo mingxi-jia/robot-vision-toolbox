@@ -21,7 +21,7 @@ import json
 from typing import Dict, Optional
 
 def detect_hand(args):
-    min_score = 0.85
+    min_score = 0.75
     with open(args.intrinsics_path, 'r') as f:
         camera_intrinsics = json.load(f)
 
@@ -66,8 +66,8 @@ def detect_hand(args):
     # Make output directory if it does not exist
     os.makedirs(args.out_folder, exist_ok=True)
 
-    # Get all demo images ends with .jpg or .png
-    img_paths = [img for end in args.file_type for img in Path(args.img_folder).glob(end)]
+    # Get all demo images; default to .jpg, .jpeg, .png if not specified
+    img_paths = sorted([img for ext in ['*.jpg', '*.jpeg', '*.png'] for img in Path(args.img_folder).glob(ext)])
     
     # all_centroids = dict()
     # Iterate over all images in folder
@@ -77,9 +77,12 @@ def detect_hand(args):
         img_timer = time.time()
         # Process image
         img_cv2 = cv2.imread(str(img_path))
+        if img_cv2 is None:
+            print(f"❌ Failed to read image: {img_path}")
+            continue
         height, width = img_cv2.shape[:2]
         img_fn = os.path.splitext(os.path.basename(img_path))[0]
-        frame_id = int(img_fn.split('_')[1])
+        frame_id = int(img_fn)
         # Load depth image (search by substring match for flexibility)
         depth_img = None
         for f in os.listdir(args.depth_folder):
@@ -175,7 +178,7 @@ def detect_hand(args):
             inference_timer = time.time()
             batch = recursive_to(batch, device)
             with torch.no_grad():
-                with torch.cuda.amp.autocast():
+                with torch.cuda.amp.autocast(dtype=torch.float32):
                     out = model(batch)
                     
             # Inference complete
@@ -210,6 +213,7 @@ def detect_hand(args):
                 cam_t = pred_cam_t_full[n]
                 # Get predicted global rotation
                 global_orient = out['pred_mano_params']['global_orient'][n].detach().contiguous().cpu().numpy()[0]
+                # global_orient[:, 2] *= -1  # flip
                 # # Handedness correction for global_orient
                 # if not is_right:
                 #         M = np.diag([-1, 1, 1])  # mirror across X axis

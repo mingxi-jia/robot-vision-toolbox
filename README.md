@@ -40,6 +40,7 @@ Besides these files, you also need to download the MANO model. Please visit the 
 python pipeline.py 
 --video_path YOUR_VIDEO_PATH (or image folder path <-- preferred)
 --depth_folder YOUR_DEPTH_PATH
+-- cam_num 3 -> front;  2 -> left;  3-> right; 0 (otherwise, if 0 is used need to put in background_img adn intrinsics_path) 
 --background_img: PATH_TO_ENVIRONMENT_IMAGE [If none, use the first frame of the video as the background]
 --intrinsics_path CAMERA_INTRINSICS_JSON
 --debug 

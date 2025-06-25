@@ -94,13 +94,14 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, ca
     # Flip and scale
     hamer_vertices = hamer_vertices.copy()
 
-    # filter out the points with unreasonable depth < 0.2 m and > 2m
-    valid_points = hand_point_cloud[
-    (hand_point_cloud[:, 2] > 0.2) & (hand_point_cloud[:, 2] < 2)]
-    hand_point_cloud = valid_points
+
     # print(f"💡hamer: {len(hamer_vertices)} points", f"💡 Point cloud size: {hand_point_cloud.shape[0]} points")
     # Z alignment
     if hand_point_cloud.shape[0] > 0:
+        # filter out the points with unreasonable depth < 0.2 m and > 2m
+        valid_points = hand_point_cloud[
+        (hand_point_cloud[:, 2] > 0.2) & (hand_point_cloud[:, 2] < 2)]
+        hand_point_cloud = valid_points
         # Only keep points with reasonable Z values (in meters)
         valid_z = (hand_point_cloud[:, 2] > 0.2) & (hand_point_cloud[:, 2] < 1.5)
         num_valid_points = np.sum(valid_z)

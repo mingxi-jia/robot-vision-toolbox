@@ -1,10 +1,8 @@
 raw_data
 *.pyc
-*.png
 *.jpg
 *.obj
 *.mp4
-*.json
 *.yml
 submodules/segment-anything-2-real-time/
 submodules/hamer/
@@ -24,3 +22,4 @@ hamer_detector/sphere_overlay/images.txt
 hamer_detector/tmp_imgs/list.txt
 list.txt
 human_segmentor/.test.py
+.vscode/launch.json
