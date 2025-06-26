@@ -1,4 +1,5 @@
 import os
+import copy
 from pathlib import Path
 
 import open3d as o3d
@@ -7,6 +8,43 @@ import yaml
 from PIL import Image
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
+
+current_file_path = os.path.dirname(os.path.abspath(__file__))
+gripper_asset = o3d.io.read_point_cloud(os.path.join(current_file_path, "./gripper.ply"))
+xyz_numpy = np.asarray(gripper_asset.points).astype(np.float32)
+color_numpy = np.asarray(gripper_asset.colors).astype(np.float32)
+GRIPPER = np.concatenate([xyz_numpy, color_numpy], axis=1)
+# GRIPPER = GRIPPER[GRIPPER[:,2]<-0.04] # delete gripper
+
+num_points = 1024  # adjust the number of points as needed
+r = 0.05  # sphere radius, modify r if needed
+indices = np.arange(num_points, dtype=float) + 0.5
+phi = np.arccos(1 - 2 * indices / num_points)
+theta = np.pi * (1 + 5**0.5) * indices
+x = r * np.sin(phi) * np.cos(theta)
+y = r * np.sin(phi) * np.sin(theta)
+z = r * np.cos(phi)
+colors = np.zeros((num_points, 3), dtype=np.float32)
+mask1 = (x >= 0) & (y >= 0) & (z >= 0)
+mask2 = (x < 0) & (y >= 0) & (z >= 0)
+mask3 = (x < 0) & (y < 0) & (z >= 0)
+mask4 = (x >= 0) & (y < 0) & (z >= 0)
+mask5 = (x >= 0) & (y >= 0) & (z < 0)
+mask6 = (x < 0) & (y >= 0) & (z < 0)
+mask7 = (x < 0) & (y < 0) & (z < 0)
+mask8 = (x >= 0) & (y < 0) & (z < 0)
+
+colors[mask1] = [1.0, 0.0, 0.0]   # red      : (+x, +y, +z)
+colors[mask2] = [0.0, 1.0, 0.0]   # green    : (-x, +y, +z)
+colors[mask3] = [0.0, 0.0, 1.0]   # blue     : (-x, -y, +z)
+colors[mask4] = [1.0, 1.0, 0.0]   # yellow   : (+x, -y, +z)
+colors[mask5] = [1.0, 0.0, 1.0]   # magenta  : (+x, +y, -z)
+colors[mask6] = [0.0, 1.0, 1.0]   # cyan     : (-x, +y, -z)
+colors[mask7] = [0.5, 0.5, 0.5]   # grey     : (-x, -y, -z)
+colors[mask8] = [1.0, 0.5, 0.0]   # orange   : (+x, -y, -z)
+# colors = np.tile(np.array([0., 1., 0.]), (num_points, 1)) 
+# colors = np.where(y[:, None] < 0, np.array([0., 1., 0.]), np.array([0., 0., 1.]))
+SPHERE = np.concatenate([np.stack([x, y, z], axis=1), colors], axis=1)
 
 def np2o3d(pcd, color=None):
     # pcd: (n, 3)
@@ -102,6 +140,97 @@ def get_extrinsics_matrix(t, q):
     
     return extrinsics
 
+def apply_se3_pcd_transform(points, transform):
+    """
+    Apply SE3 transformation to a set of points.
+    points: a (N, 6) array where N is number of points and the last dimension is (x,y,z,r,g,b)
+    """
+    new_points = copy.deepcopy(points)
+    points_homogeneous = np.hstack([new_points[:, :3], np.ones((new_points.shape[0], 1))])
+    transformed_points = (transform @ points_homogeneous.T).T
+    new_points[:, :3] = transformed_points[:, :3]
+    return new_points
+
+def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
+    """
+    Render the gripper point cloud at the given end effector pose.
+    ee_pose has a shpae of (N, 7) where 7 means (x, y, z, qx, qy, qz, qw)
+    is_add_noisy is used to add noise to the point cloud.
+    """
+    if model_type == 'gripper':
+        model_pcd = GRIPPER
+    elif model_type == 'sphere':
+        model_pcd = SPHERE
+    else:
+        raise NotImplementedError(f"model type {model_type} not implemented")
+
+    B = list(ee_pose.shape[:-1])
+        
+    ee_pose = ee_pose.reshape(-1, 7)
+    batch_size, ndim = ee_pose.shape
+    pcds = []
+    for i in range(batch_size):
+        gripper_pcd = copy.deepcopy(model_pcd)
+        tran_mat = np.eye(4)
+        tran_mat[:3, 3] = ee_pose[i, :3] 
+        tran_mat[:3, :3] = R.from_quat(ee_pose[i, 3:7]).as_matrix()
+        pcd = apply_se3_pcd_transform(gripper_pcd, tran_mat)
+        pcds.append(populate_point_num(pcd, fix_point_num))
+
+    return np.stack(pcds).reshape([*B, fix_point_num, -1])
+
+def o3d2np(pcd_o3d, num_samples=4412):
+    # pcd: (n, 3)
+    # color: (n, 3)
+    xyz = np.asarray(pcd_o3d.points)
+    rgb = np.asarray(pcd_o3d.colors)
+    num_points = xyz.shape[0]
+
+    if num_points > num_samples:
+        pcd_o3d = pcd_o3d.farthest_point_down_sample(num_samples=num_samples)
+        xyz = np.asarray(pcd_o3d.points)
+        rgb = np.asarray(pcd_o3d.colors)
+        pcd_np = np.concatenate([xyz, rgb], axis=1)
+    else:
+        pcd_np = np.concatenate([xyz, rgb], axis=1)
+        pcd_np = populate_point_num(pcd_np, num_samples)
+
+    return pcd_np
+
+def filter_point_cloud_by_workspace(pcd, x_min, x_max, y_min, y_max, z_min, z_max):
+    """
+    Filters an Open3D point cloud based on given x and y workspace limits.
+
+    Args:
+        pcd (open3d.geometry.PointCloud): The input point cloud.
+        x_min (float): Minimum x-coordinate for the workspace.
+        x_max (float): Maximum x-coordinate for the workspace.
+        y_min (float): Minimum y-coordinate for the workspace.
+        y_max (float): Maximum y-coordinate for the workspace.
+        z_min (float): Minimum z-coordinate for the workspace.
+        z_max (float): Maximum z-coordinate for the workspace.
+
+    Returns:
+        open3d.geometry.PointCloud: The filtered point cloud.
+    """
+    points = np.asarray(pcd.points)
+
+    # Create a boolean mask for points within the specified x and y ranges
+    x_mask = (points[:, 0] >= x_min) & (points[:, 0] <= x_max) 
+    y_mask = (points[:, 1] >= y_min) & (points[:, 1] <= y_max)
+    z_mask = (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
+
+    # Combine the masks
+    combined_mask = x_mask & y_mask & z_mask
+
+    # Get the indices of the points that satisfy the conditions
+    filtered_indices = np.where(combined_mask)[0]
+
+    # Select these points from the original point cloud
+    filtered_pcd = pcd.select_by_index(filtered_indices)
+
+    return filtered_pcd
+
 if __name__ == "__main__":
 
     data_path = "example_data/multiview_rgbd"
@@ -140,7 +269,7 @@ if __name__ == "__main__":
 
     # multi-view reconstruction example
     
-    all_pcds = []
+    all_pcds = o3d.geometry.PointCloud()
 
     for frame_i in range(num_frames):
         for i in cam_views:
@@ -153,11 +282,20 @@ if __name__ == "__main__":
 
 
             pcd_np, pcd_o3d = convert_RGBD_to_open3d(rgb, depth, info_dict[cam_name]['intrinsics'], info_dict[cam_name]['extrinsics'])
-            all_pcds.append(pcd_o3d)
+            all_pcds += pcd_o3d
+            
 
             # coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.8, origin=[0, 0, 0])
             # o3d.visualization.draw_geometries([pcd_o3d, coordinate_frame])
 
+        max_point_num = 4412
+        x_min, y_min, z_min, ws_size = 0.2, -0.2, 0., 0.5
+        all_pcds = filter_point_cloud_by_workspace(all_pcds, x_min, x_min+ws_size, y_min, y_min+ws_size, z_min, z_min+ws_size)
+        all_pcds = all_pcds.farthest_point_down_sample(num_samples=max_point_num)
+
+        exmaple_pose = np.array([0.4, 0., 0.2, 0., 0., 0., 1.])
+        sphere = render_pcd_from_pose(exmaple_pose[None,...], fix_point_num=1024, model_type='sphere')[0]
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.8, origin=[0, 0, 0])
-        all_pcds.append(coordinate_frame)
-        o3d.visualization.draw_geometries(all_pcds)
+
+        all_pcds += np2o3d(sphere[:, :3], sphere[:, 3:6])
+        o3d.visualization.draw_geometries([all_pcds, coordinate_frame])
