@@ -15,12 +15,14 @@ from human_segmentor.util import convert_images_to_video, get_first_frame
 import time
 import matplotlib.pyplot as plt
 from hamer_detector.KF_smoothing import smooth_hand_pose_json_KF
-
+from human_segmentor.util import rename_images_sequentially
 SAMPLE_RATE = 1
 start_time = time.time()
 def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_out_dir, background_img, depth_img_dir, intrinsics_path, cam_num, debug):
     # Make all paths absolute
     video_path = os.path.abspath(video_path)
+    rename_images_sequentially(video_path, '.png')
+    rename_images_sequentially(depth_img_dir, '.npy')
     tmp_img_dir = os.path.abspath(tmp_img_dir)
     segmentation_out_dir = os.path.abspath(segmentation_out_dir)
     hamer_out_dir = os.path.abspath(hamer_out_dir)
@@ -90,12 +92,15 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     
     if cam_num == 1:
         background_img = "setup/cam1_background.png"
+        depth_background_img = "setup/cam1_background.npy"
         hamer_args.intrinsics_path = "setup/intrinsics_cam1.json"
     elif cam_num == 2:
         background_img = "setup/cam2_background.png"
+        depth_background_img = "setup/cam2_background.npy"
         hamer_args.intrinsics_path = "setup/intrinsics_cam2.json"
     elif cam_num == 3:
         background_img = "setup/cam3_background.png"
+        depth_background_img = "setup/cam3_background.npy"
         hamer_args.intrinsics_path = "setup/intrinsics_cam3.json"
     intrinsics_path = hamer_args.intrinsics_path
 
@@ -103,19 +108,21 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     hamer_end_time = time.time()
     convert_images_to_video(hamer_out_dir, framerate=30//SAMPLE_RATE)
     # step 2.5 Smooth centroid data
-    smooth_hand_pose_json_KF(os.path.join(hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate = SAMPLE_RATE)
+    # smooth_hand_pose_json_KF(os.path.join(hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate = SAMPLE_RATE)
     print("saved smoothed KF")
     
     print("🔹 Step 3: Segmenting and removing human from video...")
     seg_start_time = time.time()
-    run_sam2_segmentation(tmp_img_dir, hamer_out_dir, segmentation_out_dir, background_img, debug, ref_cam = cam_num)
+    run_sam2_segmentation(tmp_img_dir, hamer_out_dir, depth_img_dir, intrinsics_path, segmentation_out_dir, background_img, debug, ref_cam = cam_num)
 
+    segmented_rgb_dir = os.path.join(segmentation_out_dir, "segmented_rgb")
+    segmented_depth_dir = os.path.join(segmentation_out_dir, "segmented_depth")
     seg_end_time = time.time()
-    convert_images_to_video(segmentation_out_dir, framerate=30//SAMPLE_RATE)
+    convert_images_to_video(segmented_rgb_dir, framerate=30//SAMPLE_RATE)
     
     print("🔹 Step 4: Rendering spheres and blending with background...")
     sphere_start_time = time.time()
-    replace_sphere(hamer_out_dir, segmentation_out_dir, sphere_out_dir, intrinsics_path, debug=debug)
+    replace_sphere(hamer_out_dir, segmented_rgb_dir, segmented_depth_dir, sphere_out_dir, intrinsics_path, ori_depth_folder=depth_img_dir, debug=debug)
     sphere_end_time = time.time()
     convert_images_to_video(sphere_out_dir, framerate=30//SAMPLE_RATE)
     print("✅ All steps complete. Final images saved to:", sphere_out_dir)
@@ -147,7 +154,7 @@ if __name__ == "__main__":
     parser.add_argument("--intrinsics_path", type=str, default=None, help="Path to camera intrinsics .json file")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode with full rendering and mesh saving")
     args = parser.parse_args()
-        # Derive output folders from video_path
+    # Derive output folders from video_path    
     base_dir = os.path.splitext(os.path.abspath(args.video_path))[0]
     tmp_img_dir = base_dir + "_frames"
     segmentation_out_dir = base_dir + "_segmented"

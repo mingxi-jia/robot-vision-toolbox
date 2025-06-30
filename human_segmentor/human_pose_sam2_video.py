@@ -4,7 +4,7 @@ import torch
 import base64
 import os
 import glob
-
+import open3d as o3d
 # if using Apple MPS, fall back to CPU for unsupported ops
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 import numpy as np
@@ -20,6 +20,9 @@ import sys
 sys.path.append("submodules/segment-anything-2-real-time/sam2")
 from sam2.build_sam import build_sam2
 from sam2.build_sam import build_sam2_video_predictor
+import json
+sys.path.append("./")
+from human_segmentor.util import convert_image_format
 
 # torch.autocast(device_type="cuda", dtype=torch.bfloat16).__enter__()
 
@@ -46,7 +49,7 @@ def show_mask(mask, ax, obj_id=None, random_color=False):
         color = np.array([*cmap(cmap_idx)[:3], 0.6])
     h, w = mask.shape[-2:]
     mask_image = mask.reshape(h, w, 1) * color.reshape(1, 1, -1)
-    ax.imshow(mask_image)
+    # ax.imshow(mask_image)
 
 
 def show_points(coords, labels, ax, marker_size=200):
@@ -61,32 +64,6 @@ def show_box(box, ax):
     w, h = box[2] - box[0], box[3] - box[1]
     ax.add_patch(plt.Rectangle((x0, y0), w, h, edgecolor='green', facecolor=(0, 0, 0, 0), lw=2))
     
-def rename_images_to_jpeg_sequence(folder_path):
-    folder = Path(folder_path)
-    valid_extensions = ['.jpg', '.jpeg', '.png', '.bmp']
-
-    # Filter and sort image files
-    image_paths = sorted([f for f in folder.iterdir() if f.suffix.lower() in valid_extensions])
-
-    for idx, img_path in enumerate(image_paths):
-        # Read image
-        img = cv2.imread(str(img_path))
-        if img is None:
-            print(f"❌ Skipping unreadable file: {img_path}")
-            continue
-
-        # Create new file name
-        new_name = f"{idx+0:06d}.jpg"
-        new_path = folder / new_name
-
-        # Save image as JPEG
-        cv2.imwrite(str(new_path), img)
-
-        # Remove original if not already .jpg with correct name
-        if img_path.name != new_name:
-            os.remove(img_path)
-
-    print(f"✅ Renamed {len(image_paths)} images in '{folder_path}'.")
 
 def annotate_points(image_path):
     """
@@ -147,9 +124,44 @@ def replace_background(image, mask, reference_image, ref_cam = 1):
 
     # Create the final composited image
     result_image = image.copy()
-    result_image[mask == 1] = reference_resized[mask == 1]  # Replace background pixels
-
+    result_image[mask == 1] = reference_resized[mask == 1]  # Replace background pixels where mask is 0
     height, width = image.shape[:2]
+
+    if ref_cam == 1:
+        top_section = height // 6
+        result_image[:top_section, :] = reference_resized[:top_section, :]
+        result_image[:, 3 * width // 4:] = reference_resized[:, 3 * width // 4:]  # Right 1/4
+
+    elif ref_cam == 2:
+        top_section = height // 6
+        result_image[:top_section, :] = reference_resized[:top_section, :]
+        result_image[:, :width // 3] = reference_resized[:, :width // 3]  # Left 1/3
+
+    else:
+        top_section = 2 * height // 5
+        result_image[:top_section, :] = reference_resized[:top_section, :]
+
+    return result_image
+
+
+def replace_depth_background(depth_image, reference_depth_image, ref_cam = 1):
+    """
+    Replaces the background of the segmented human depth image with pixels from the reference depth image.
+    
+    Arguments:
+    - depth_image: Original depth image (HxW).
+    - mask: Binary segmentation mask (1 for foreground, 0 for background).
+    - reference_depth_image: Depth image to take the background from.
+    
+    Returns:
+    - Depth image with replaced background.
+    """
+    # Ensure the reference depth image is the same size as the original depth image
+    reference_resized = cv2.resize(reference_depth_image, (depth_image.shape[1], depth_image.shape[0]))
+
+    # Create the final composited depth image
+    result_image = depth_image.copy()
+    height, width = depth_image.shape[:2]
 
     if ref_cam == 1:
         top_section = height // 6
@@ -170,9 +182,45 @@ def replace_background(image, mask, reference_image, ref_cam = 1):
 # `video_dir` a directory of JPEG frames with filenames like `<frame_index>.jpg`
 # Specify the folder path containing your image sequence
 
-def run_sam2_segmentation(source_frames, hand_mask_dir, output_dir, reference_image_path = None, debug = False, ref_cam = 1):
+def remove_masked_depth_points(depth_image: np.ndarray, mask: np.ndarray, intrinsics: dict = None):
+    """
+    Removes depth pixels where the mask == 1 (foreground).
+    
+    Args:
+        depth_image (np.ndarray): HxW depth array (in meters or mm).
+        mask (np.ndarray): HxW binary mask array where 1 indicates pixels to remove.
+        intrinsics (dict, optional): Dictionary with keys fx, fy, cx, cy for projecting to 3D.
+
+    Returns:
+        masked_depth (np.ndarray): Depth image with masked regions zeroed out.
+        (optional) filtered_points (np.ndarray): Nx3 array of 3D points if intrinsics is given.
+    """
+    assert depth_image.shape == mask.shape, "Depth and mask must be the same shape"
+    kernel = np.ones((7, 7), np.uint8)
+    mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)
+    masked_depth = depth_image.copy()
+    masked_depth[mask == 1] = -1
+
+
+    if intrinsics is not None:
+        fx, fy, cx, cy = intrinsics["fx"], intrinsics["fy"], intrinsics["cx"], intrinsics["cy"]
+        H, W = depth_image.shape
+        u, v = np.meshgrid(np.arange(W), np.arange(H))
+        z = masked_depth.astype(np.float32)
+        valid = z > 0
+        x = (u[valid] - cx) * z[valid] / fx
+        y = (v[valid] - cy) * z[valid] / fy
+        points = np.stack((x, y, z[valid]), axis=1)
+        print("----Removing Depth----")
+        print(f"Retained {points.shape[0]} valid 3D points after masking.")
+        return masked_depth, points
+
+    return masked_depth
+
+def run_sam2_segmentation(source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1):
+    # convert all files to jpg first
     if not any(f.lower().endswith(".jpg") for f in os.listdir(source_frames)):
-        rename_images_to_jpeg_sequence(source_frames)
+        convert_image_format(source_frames, ".jpg")
 
     reference_image = cv2.imread(reference_image_path)
     hand_mask_paths = sorted(glob.glob(os.path.join(hand_mask_dir, "*_handmask.png")))
@@ -241,6 +289,12 @@ def run_sam2_segmentation(source_frames, hand_mask_dir, output_dir, reference_im
         }
 
     os.makedirs(output_dir, exist_ok=True)
+    color_output_folder = os.path.join(output_dir, 'segmented_rgb')
+    os.makedirs(color_output_folder, exist_ok=True)
+    print("Saving color to", color_output_folder)
+    depth_output_folder = os.path.join(output_dir, 'segmented_depth')
+    print("Saving depth to", depth_output_folder)
+    os.makedirs(depth_output_folder, exist_ok=True)
     for out_frame_idx in range(len(frame_names)):
         frame_path = os.path.join(video_dir, frame_names[out_frame_idx])
         image = cv2.imread(frame_path)
@@ -259,23 +313,48 @@ def run_sam2_segmentation(source_frames, hand_mask_dir, output_dir, reference_im
                     colored_mask = np.zeros_like(image, dtype=np.uint8)
                     colored_mask[binary_mask == 1] = (0, 255, 0)
                     overlay_image = cv2.addWeighted(image, 0.5, colored_mask, 0.5, 0)
-                    debug_path = os.path.join(output_dir, f"debug_{out_frame_idx:06d}.jpg")
+                    debug_path = os.path.join(color_output_folder, f"[debug]{out_frame_idx:06d}_segmented[debug].png")
                     cv2.imwrite(debug_path, overlay_image)
 
                 # Save background replaced version
                 if reference_image is not None:
                     replaced = replace_background(image, binary_mask, reference_image, ref_cam=ref_cam)
-                    final_path = os.path.join(output_dir, f"frame_{out_frame_idx:06d}_final.jpg")
+                    final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}_segmented.png")
                     cv2.imwrite(final_path, replaced)
-                    print(f"✅ Saved final image to: {final_path}")
 
+                # ➕ Filter depth
+                depth_name = f"{int(Path(frame_names[out_frame_idx]).stem):06d}.npy"
+                depth_path = os.path.join(depth_folder, depth_name)
+                if os.path.exists(depth_path):
+                    depth = np.load(depth_path)
+                    with open(intrinsics, "r") as f:
+                        intr = json.load(f)
+                    masked_depth, points = remove_masked_depth_points(depth, binary_mask, intr)
 
-# ref_cam = 3
-# source_frames = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb/"  # <-- Replace with your actual folder path
-# hand_mask_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb_hamer"
-# output_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/test2"
-# ref_image = f"/home/xhe71/Desktop/robotool_data/06232025/background/cam{ref_cam}/rgb/frame_000000.png"
+                    result_depth = masked_depth
+                        
+                    np.save(os.path.join(depth_output_folder, f"{out_frame_idx:06d}_segmented.npy"), result_depth)
+                    
+                    if masked_depth is not None:
+                        # Normalize depth for visualization
+                        normalized_depth = cv2.normalize(result_depth, None, 0, 255, cv2.NORM_MINMAX)
+                        depth_visual = normalized_depth.astype(np.uint8)
+                        depth_colormap = cv2.applyColorMap(depth_visual, cv2.COLORMAP_JET)
+                        vis_path = os.path.join(depth_output_folder, f"{out_frame_idx:06d}_depth_vis.png")
+                        cv2.imwrite(vis_path, depth_colormap)
+    
+    convert_image_format(source_frames, ".png")
+    print("Finished segmenting data")
 
-# debug = True
-# run_sam2_segmentation(source_frames, hand_mask_dir, output_dir, ref_image, debug, ref_cam = ref_cam)
+if __name__ == "__main__":
+    ref_cam = 3
+    intrinsics_path = f"setup/intrinsics_cam{ref_cam}.json"
+    source_frames = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb/"  # <-- Replace with your actual folder path
+    hand_mask_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb_hamer"
+    depth_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth/"
 
+    output_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth_segmented"
+    ref_image = f"/home/xhe71/Desktop/robotool_data/06232025/background/cam{ref_cam}/rgb/frame_000000.png"
+
+    debug = True
+    run_sam2_segmentation(source_frames, hand_mask_dir, depth_dir, intrinsics_path, output_dir,  ref_image, debug, ref_cam = ref_cam)

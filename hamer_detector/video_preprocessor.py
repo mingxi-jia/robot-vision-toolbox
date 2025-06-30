@@ -36,7 +36,7 @@ def subsample_video(video_path, skip_every_frame=10, output_dir="./data", new_si
             if new_size is not None:
                 frame = cv2.resize(frame, new_size)
 
-            frame_filename = os.path.join(output_dir, f"frame_{frame_index:06d}.jpg")
+            frame_filename = os.path.join(output_dir, f"frame_{frame_index:06d}.png")
             cv2.imwrite(frame_filename, frame)
             saved_count += 1
 
