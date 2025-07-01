@@ -266,8 +266,6 @@ def detect_hand(args):
                 continue
             else:
                 translation = hamer_aligned.mean(axis=0)
-                print(f"--> 1) original transition Z = {all_hand_results[hand_key]['pred_cam_t'][2]} flipped Z = {translation[2]}")
-                
                 all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
                 
                 cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
@@ -293,7 +291,6 @@ def detect_hand(args):
                 continue
             else:
                 translation = hamer_aligned.mean(axis=0)
-                print(f"--> 2) original transition Z = {all_hand_results[hand_key]['pred_cam_t'][2]} flipped Z = {translation[2]}")
                 all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
 
     with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:

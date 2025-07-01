@@ -95,7 +95,7 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, ca
     hamer_vertices = hamer_vertices.copy()
 
 
-    # print(f"💡hamer: {len(hamer_vertices)} points", f"💡 Point cloud size: {hand_point_cloud.shape[0]} points")
+
     # Z alignment
     if hand_point_cloud.shape[0] > 0:
         # filter out the points with unreasonable depth < 0.2 m and > 2m
@@ -105,7 +105,6 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, ca
         # Only keep points with reasonable Z values (in meters)
         valid_z = (hand_point_cloud[:, 2] > 0.2) & (hand_point_cloud[:, 2] < 1.5)
         num_valid_points = np.sum(valid_z)
-        print(f"✅ Valid depth points: {num_valid_points}")
 
         if num_valid_points < 100:
             print("⚠️ Not enough valid depth points. Skipping alignment.")
@@ -131,8 +130,6 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, ca
         # print("2D translation (u,v):", translation_2d)
         hamer_vertices[:, 0] += translation_2d[0] / camera_intrinsics['fx'] * hamer_vertices[:, 2]
         hamer_vertices[:, 1] += translation_2d[1] / camera_intrinsics['fy'] * hamer_vertices[:, 2]
-    else:
-        print("Warning: No valid mask contour, skipping 2D alignment.")
 
     # Debug visualization of ICP alignment (depth point cloud, original, aligned)
     import matplotlib.pyplot as plt
@@ -202,9 +199,6 @@ def render_textured_sphere_projection(color_img, translation, camera_intrinsics,
     sphere = trimesh.creation.icosphere(radius=radius)
     sphere.apply_translation(translation)
 
-    print("Sphere translation (Z):", translation[2])
-    print("Sphere bounds:", sphere.bounds)
-
     # DEBUG: Use solid color instead of texture to test visibility
     material = pyrender.MetallicRoughnessMaterial(
         baseColorFactor=[0.0, 1.0, 0.0, 1.0],  # Bright green
@@ -230,11 +224,6 @@ def render_textured_sphere_projection(color_img, translation, camera_intrinsics,
 
     scene.add(camera, pose=camera_pose)
 
-    # Print camera field of view and pose
-    print("Camera FOV:")
-    print(f"  fx: {fx}, fy: {fy}, cx: {cx}, cy: {cy}")
-    print("Camera pose matrix:\n", camera_pose)
-
     light = pyrender.SpotLight(color=np.ones(3), intensity=5.0,
                                 innerConeAngle=np.pi/16.0,
                                 outerConeAngle=np.pi/6.0)
@@ -249,7 +238,7 @@ def render_textured_sphere_projection(color_img, translation, camera_intrinsics,
     # Debug: Save intermediate outputs
     cv2.imwrite("debug_color_rendered.png", color)
     cv2.imwrite("debug_depth_rendered.png", (depth * 255).astype(np.uint8))
-    print("Rendered depth min/max:", depth.min(), depth.max())
+
     # Visualize
     alpha = (depth > 0).astype(np.float32)[..., None]
     blended = color_img.astype(np.float32) * (1 - alpha) + color.astype(np.float32) * alpha

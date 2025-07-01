@@ -55,7 +55,7 @@ def convert_hamer_pose_to_extrinsic(data_path, cam_name = 'cam3', intrinsics = N
     with open(os.path.join('setup/camera_info.yaml'), 'r') as f:
         cam_info = yaml.safe_load(f)
         
-    hand_path = os.path.join(data_path, cam_name, 'rgb_final', 'sphere_pose.json')
+    hand_path = os.path.join(data_path, cam_name, 'output', 'sphere_pose.json')
     if not os.path.exists(hand_path):
         return None
     with open(hand_path, 'r') as f:
@@ -70,11 +70,10 @@ def convert_hamer_pose_to_extrinsic(data_path, cam_name = 'cam3', intrinsics = N
         trans_pose = uvz_to_world(u,v, z, intrinsics, extrinsics)
         quat = global_orient
         example_pose = np.hstack([trans_pose, quat])
-        print(f'world_frame{example_pose}')
         pose_dict[frame_idx] = example_pose.tolist()
         # Removed cam_frame.transform(extrinsics)
     # Save to json
-    output_path = os.path.join(data_path, f'{cam_name}_pose_dict.json')
+    output_path = os.path.join(data_path, f'pose_dict.json')
     with open(output_path, 'w') as f:
         json.dump(pose_dict, f, indent=4)
     print(f"Saved pose dict to {output_path}")
@@ -121,21 +120,18 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
 
     
     sphere_cam_name = f'cam{sphere_cam}'
-    pose_path = os.path.join(data_path, f'{sphere_cam_name}_pose_dict.json')
-    # if not os.path.exists(pose_path):
-    #     pose_dict = convert_hamer_pose_to_extrinsic(data_path, cam_name = sphere_cam_name, extrinsics = sphere_extrinsics)
-    # else:
-    #     with open(pose_path, 'r') as f:
-    #         pose_dict = json.load(f)
-    pose_dict = convert_hamer_pose_to_extrinsic(data_path, cam_name = sphere_cam_name, intrinsics = sphere_intrinsics, extrinsics = sphere_extrinsics)
+    pose_path = os.path.join(data_path, 'pose_dict.json')
+    if not os.path.exists(pose_path):
+        pose_dict = convert_hamer_pose_to_extrinsic(data_path, cam_name = sphere_cam_name, extrinsics = sphere_extrinsics)
+    else:
+        with open(pose_path, 'r') as f:
+            pose_dict = json.load(f)
+    # pose_dict = convert_hamer_pose_to_extrinsic(data_path, cam_name = sphere_cam_name, intrinsics = sphere_intrinsics, extrinsics = sphere_extrinsics)
+
     # multi-view reconstruction example
 
     all_pcds = o3d.geometry.PointCloud()
     frame_sequence = []
-    # hand_path = "/home/xhe71/Desktop/robotool_data/06232025/slow/cam3/rgb_hamer/hand_pose_camera_info_smoothed.json"
-    # hand_path = os.path.join(data_path, 'cam3', 'rgb_hamer', 'hand_pose_camera_info_smoothed.json')
-    # with open(hand_path, 'r') as f:
-    #     hand_data = json.load(f)
         
     for frame_i in range(start_frame, num_frames):
         for i in cam_views:
@@ -150,9 +146,7 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
             #     depth_path = os.path.join(data_path, cam_name, 'rgb_segmented','segmented_depth', f'{frame_name}_segmented.npy')
             depth_path = os.path.join(data_path, cam_name, 'rgb_segmented','segmented_depth', f'{frame_name}_segmented.npy')
             if not os.path.exists(rgb_path) or not os.path.exists(depth_path):
-                print(f"Skipping frame {frame_name} for {cam_name} due to missing data")
                 continue
-            print(frame_name, rgb_path, depth_path)
             rgb = np.asarray(Image.open(rgb_path).convert('RGB'))
             depth = np.load(depth_path) / 1000.
 
@@ -193,8 +187,6 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
             example_pose = np.array(pose_dict[frame_i])
             sphere = render_pcd_from_pose(example_pose[None,...], fix_point_num=1024, model_type='sphere')[0]
             all_pcds += np2o3d(sphere[:, :3], sphere[:, 3:6])
-            print(example_pose)
-        print(f"visualize frame {frame_i}")
 
         # # Display the frame
         # o3d.visualization.draw_geometries([all_pcds, coordinate_frame],
@@ -216,5 +208,5 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
         
     return frame_sequence
 
-# frame_sequence = generate_pcd_sequence(data_path, start_frame=0, sphere_cam=3)
+frame_sequence = generate_pcd_sequence(data_path, start_frame=0, sphere_cam=3)
 

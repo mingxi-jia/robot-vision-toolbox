@@ -16,6 +16,7 @@ export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/l
 # install other necessary packages:
 pip install mediapipe
 pip install pykalman
+pip install git+https://github.com/cansik/mesh-sequence-player.git@1.10.1
 ```
 
 # 2. hamer hand detector
@@ -46,6 +47,12 @@ python pipeline.py
 --debug 
 
 ```
+# visualize pcd output:
+
+```
+mesh-sequence-player  -p folder_to_meshes
+```
+
 
 ```
 side note: adjust the following parameters if needed

@@ -98,7 +98,7 @@ def depth2fgpcd(depth, cam_params):
     pos_x, pos_y = np.meshgrid(np.arange(w), np.arange(h))
     pos_x = pos_x[mask]
     pos_y = pos_y[mask]
-    print(pos_x, pos_y, depth[mask])
+    # print(pos_x, pos_y, depth[mask])
     fgpcd[:, 0] = (pos_x - cx) * depth[mask] / fx
     fgpcd[:, 1] = (pos_y - cy) * depth[mask] / fy
     fgpcd[:, 2] = depth[mask]
