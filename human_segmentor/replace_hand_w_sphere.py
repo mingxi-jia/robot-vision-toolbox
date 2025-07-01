@@ -168,7 +168,7 @@ def replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intri
     print(first_image_path)
     image = cv2.imread(first_image_path)
     height, width, _ = image.shape
-    # Load hand mesh info
+    # # Load hand mesh info
     # with open(os.path.join(mesh_folder, "hand_pose_camera_info.json"), "r") as f:
     #     hand_data = json.load(f)
 

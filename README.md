@@ -15,7 +15,8 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 
 # install realtime sam
 git clone https://github.com/Gy920/segment-anything-2-real-time.git ./submodules/segment-anything-2-real-time
-cd segment-anything-2-real-time && pip install -e .
+cd ./submodules/segment-anything-2-real-time && pip install -e .
+cd checkpoints && ./download_ckpts.sh
 export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH
 # install other necessary packages:
 pip install mediapipe
