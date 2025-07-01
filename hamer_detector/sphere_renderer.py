@@ -7,6 +7,9 @@ from PIL import Image
 from pyrender.constants import RenderFlags
 from typing import List
 import yaml
+# from submodules.hamer.hamer.utils.renderer import Renderer, create_raymond_lights
+
+
 
 class HandMarker:
     """
@@ -98,6 +101,8 @@ class HandMarker:
             znear=self._znear,
             zfar=self._zfar,
         )
+        print(cam_extrinsic)
+        print(cam_intrinsic)
         rotation_matrix = cam_extrinsic[:3, :3]
 
         # Define the rotation angle in radians (180 degrees)
@@ -133,7 +138,7 @@ class HandMarker:
                 )
             else:
                 color_mapping = {
-                    "green": "sphere_green_stripe_texture.png",
+                    "green": "bigger_distinguishable_checkerboard_texture.png",
                     "red": "sphere_red_stripe_texture.png",
                     "purple": "sphere_purple_stripe_texture.png",
                 }
@@ -181,14 +186,115 @@ class HandMarker:
         rendered_img, _ = self._offscreen_renderer.render(scene, flags)
         return rendered_img
 
+
+    def create_raymond_lights() -> List[pyrender.Node]:
+        """
+        Return raymond light nodes for the scene.
+        """
+        thetas = np.pi * np.array([1.0 / 6.0, 1.0 / 6.0, 1.0 / 6.0])
+        phis = np.pi * np.array([0.0, 2.0 / 3.0, 4.0 / 3.0])
+
+        nodes = []
+
+        for phi, theta in zip(phis, thetas):
+            xp = np.sin(theta) * np.cos(phi)
+            yp = np.sin(theta) * np.sin(phi)
+            zp = np.cos(theta)
+
+            z = np.array([xp, yp, zp])
+            z = z / np.linalg.norm(z)
+            x = np.array([-z[1], z[0], 0.0])
+            if np.linalg.norm(x) == 0:
+                x = np.array([1.0, 0.0, 0.0])
+            x = x / np.linalg.norm(x)
+            y = np.cross(z, x)
+
+            matrix = np.eye(4)
+            matrix[:3,:3] = np.c_[x,y,z]
+            nodes.append(pyrender.Node(
+                light=pyrender.DirectionalLight(color=np.ones(3), intensity=1.0),
+                matrix=matrix
+            ))
+
+        return nodes
+
+    def render_rgba_multiple(
+            self,
+            vertices: List[np.array],
+            cam_t: List[np.array],
+            rot_axis=[1,0,0],
+            rot_angle=0,
+            mesh_base_color=(1.0, 1.0, 0.9),
+            scene_bg_color=(0,0,0),
+            render_res=[256, 256],
+            focal_length=None,
+            is_right=None,
+        ):
+
+        renderer = pyrender.OffscreenRenderer(viewport_width=render_res[0],
+                                              viewport_height=render_res[1],
+                                              point_size=1.0)
+        # material = pyrender.MetallicRoughnessMaterial(
+        #     metallicFactor=0.0,
+        #     alphaMode='OPAQUE',
+        #     baseColorFactor=(*mesh_base_color, 1.0))
+
+        if is_right is None:
+            is_right = [1 for _ in range(len(vertices))]
+
+        # Load your texture image (must be square or UV-mapped properly)
+        texture_img = Image.open("hamer_detector/sphere_textures/bigger_distinguishable_checkerboard_texture.png")  # Replace with your texture path
+        texture_img = np.array(texture_img)
+
+        mesh_list = []
+        for t in cam_t:
+            # Create a UV-mapped sphere
+            sphere = trimesh.creation.uv_sphere(radius=0.05)
+            sphere.visual = trimesh.visual.TextureVisuals(image=texture_img)
+
+            # Position the sphere
+            sphere.apply_translation(t)
+
+            # Convert to pyrender mesh with texture
+            mesh = pyrender.Mesh.from_trimesh(sphere, smooth=False)
+            mesh_list.append(mesh)
+        scene = pyrender.Scene(bg_color=[*scene_bg_color, 0.0],
+                               ambient_light=(0.3, 0.3, 0.3))
+        for i,mesh in enumerate(mesh_list):
+            scene.add(mesh, f'mesh_{i}')
+
+        camera_pose = np.eye(4)
+        # camera_pose[:3, 3] = camera_translation
+        camera_center = [render_res[0] / 2., render_res[1] / 2.]
+        focal_length = focal_length if focal_length is not None else self.focal_length
+        camera = pyrender.IntrinsicsCamera(fx=focal_length, fy=focal_length,
+                                           cx=camera_center[0], cy=camera_center[1], zfar=1e12)
+
+        # Create camera node and add it to pyRender scene
+        camera_node = pyrender.Node(camera=camera, matrix=camera_pose)
+        scene.add_node(camera_node)
+        Renderer.add_point_lighting(scene, camera_node)
+        Renderer.add_lighting(scene, camera_node)
+
+        light_nodes = create_raymond_lights()
+        for node in light_nodes:
+            scene.add_node(node)
+
+        color, rend_depth = renderer.render(scene, flags=pyrender.RenderFlags.RGBA)
+        color = color.astype(np.float32) / 255.0
+        renderer.delete()
+
+        return color
+
+
 def main():
     # Example setup:
     # Folder containing 20 images: "images/"
     # A file containing 20 (x,y,z) positions: "positions.npy" (shape: (20,3))
     # Modify these paths as needed.
-    image_folder = "hamer_detector/example_data/realsense-test"
-    position_file = "hamer_detector/example_data/realsense-test-hamer/centroids.yml"
-    out_folder = "hamer_detector/example_data/realsense-test-spheres"
+    image_folder = "/home/xhe71/Desktop/demo_data/0417_test"
+    position_file = "/home/xhe71/Desktop/demo_data/0417_test_hamer/centroids.yml"
+    out_folder = "/home/xhe71/Desktop/demo_data/0417_test_out"
 
     os.makedirs(out_folder, exist_ok=True)
 
@@ -214,9 +320,9 @@ def main():
         image_width=width,
         image_height=height,
         camera_scales=[1.0],
-        sphere_radius=0.2,  # pick a radius you prefer
-        znear=0.01,
-        zfar=5.0,
+        sphere_radius=0.05,  # pick a radius you prefer
+        znear=0.4,
+        zfar=20.0,
     )
 
     img_path_list = os.listdir(image_folder)
@@ -233,7 +339,7 @@ def main():
         pil_img = pil_img.resize((width, height))  # ensure it matches the renderer size if needed
 
         # Build a 4x4 transform for the sphere at positions_xyz[i]
-        image_fn = i.split(".")[0]
+        image_fn = i.split(".")[0] + '_left'
         x, y, z = positions_xyz[image_fn]
         T = np.eye(4, dtype=np.float32)
         T[0, 3] = x
@@ -244,18 +350,10 @@ def main():
         # We pass a list of transforms, in this case just one sphere
         # 'joint_opens' can be arbitrary, e.g., [1] means "open" => sphere_cyan_stripe_texture
         # sphere_colors can be, e.g., ["green"] or [None]
-        rendered = marker.render_action(
-            cam_intrinsic=cam_intrinsic,
-            cam_extrinsic=cam_extrinsic,
-            joint_matrices=[T],
-            joint_opens=[1],
-            camera_scale=1.0,
-            sphere_colors=["green"],
-        )
 
         # Convert rendered to a PIL Image
         rendered_pil = Image.fromarray(rendered)
-
+        # print()
         # Optional Step: Overlay or alpha-blend rendered sphere with the real image.
         # In simple form, you can just take the rendered sphere's color wherever it's non-black.
         # A more advanced approach would involve alpha channels, segmentation, etc.
