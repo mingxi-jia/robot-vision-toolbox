@@ -346,15 +346,15 @@ def run_sam2_segmentation(source_frames, hand_mask_dir, depth_folder, intrinsics
     convert_image_format(source_frames, ".png")
     print("Finished segmenting data")
 
-if __name__ == "__main__":
-    ref_cam = 3
-    intrinsics_path = f"setup/intrinsics_cam{ref_cam}.json"
-    source_frames = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb/"  # <-- Replace with your actual folder path
-    hand_mask_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb_hamer"
-    depth_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth/"
+# if __name__ == "__main__":
+#     ref_cam = 3
+#     intrinsics_path = f"setup/intrinsics_cam{ref_cam}.json"
+#     source_frames = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb/"  # <-- Replace with your actual folder path
+#     hand_mask_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb_hamer"
+#     depth_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth/"
 
-    output_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth_segmented"
-    ref_image = f"/home/xhe71/Desktop/robotool_data/06232025/background/cam{ref_cam}/rgb/frame_000000.png"
+#     output_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth_segmented"
+#     ref_image = f"/home/xhe71/Desktop/robotool_data/06232025/background/cam{ref_cam}/rgb/frame_000000.png"
 
-    debug = True
-    run_sam2_segmentation(source_frames, hand_mask_dir, depth_dir, intrinsics_path, output_dir,  ref_image, debug, ref_cam = ref_cam)
+#     debug = True
+#     run_sam2_segmentation(source_frames, hand_mask_dir, depth_dir, intrinsics_path, output_dir,  ref_image, debug, ref_cam = ref_cam)

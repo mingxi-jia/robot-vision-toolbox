@@ -147,10 +147,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Full pipeline: extract video ➜ segment ➜ reconstruct ➜ render spheres")
 
 
-    parser.add_argument("--video_path", type=str, default = "/home/xhe71/Desktop/robotool_data/06232025/slow/cam1/rgb", help="Path to the input video file or image folder")
+    parser.add_argument("--video_path", type=str, help="Path to the input video file or image folder")
     parser.add_argument("--cam_num", type=int, default = 1, help="Camera id(int): 1-(right side), 2-(left side), or 3-(front) ")
     parser.add_argument("--background_img", type=str, default = None, help="Path to background image to use for replacement")
-    parser.add_argument("--depth_folder", type=str, default='/home/xhe71/Desktop/robotool_data/06232025/slow/cam1/depth', help="Folder with depth images matching image frames")
+    parser.add_argument("--depth_folder", type=str,  help="Folder with depth images matching image frames")
     parser.add_argument("--intrinsics_path", type=str, default=None, help="Path to camera intrinsics .json file")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode with full rendering and mesh saving")
     args = parser.parse_args()

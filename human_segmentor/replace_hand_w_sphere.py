@@ -323,10 +323,21 @@ def process_frame(fname, mesh_folder, image_folder, depth_folder, output_folder,
 
 if __name__ == "__main__":
 
-    mesh_folder = "/home/xhe71/Desktop/robotool_data/06232025/slow/cam3/rgb_hamer"
-    image_folder = "/home/xhe71/Desktop/robotool_data/06232025/slow/cam3/rgb_hamer"
-    depth_folder = "/home/xhe71/Desktop/robotool_data/Color_depth"
-    output_folder = "/home/xhe71/Desktop/robotool_data/Color_final"
-    intrinsic_path = "/home/xhe71/Desktop/robotool_data/camera_intrinsics.json"
-    replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intrinsic_path)
-    convert_images_to_video(output_folder, framerate=10)
+    parser = argparse.ArgumentParser(description="Replace hand with sphere in segmented images")
+    parser.add_argument("--mesh_folder", type=str, required=True, help="Folder containing hand mesh data")
+    parser.add_argument("--image_folder", type=str, required=True, help="Folder containing segmented images")
+    parser.add_argument("--depth_folder", type=str, required=True, help="Folder containing depth images")
+    parser.add_argument("--output_folder", type=str, required=True, help="Folder to save output images and depth maps")
+    parser.add_argument("--intrinsics_path", type=str, required=True, help="Path to camera intrinsics JSON file")
+    parser.add_argument("--ori_depth_folder", type=str, required=True, help="Original depth folder for reference depth images")
+    parser.add_argument("--debug", action="store_true", help="Enable debug mode for additional visualizations") 
+    replace_sphere(
+        mesh_folder=parser.parse_args().mesh_folder,
+        image_folder=parser.parse_args().image_folder,
+        depth_folder=parser.parse_args().depth_folder,
+        output_folder=parser.parse_args().output_folder,
+        intrinsics_path=parser.parse_args().intrinsics_path,
+        ori_depth_folder=parser.parse_args().ori_depth_folder,
+        debug=parser.parse_args().debug
+    )
+    convert_images_to_video(parser.parse_args().output_folder, framerate=10)

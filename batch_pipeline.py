@@ -33,7 +33,7 @@ def run_pipeline(root_path, cam_num):
 
 # === Main Execution ===
 zip_path = "/path/to/your/file.zip"
-root_path = "/home/xhe71/Desktop/robotool_data/06232025/slow/"
+root_path = "YOUR_ROOTPATH"
 
 # # Step 1: Unzip and get root directory
 # root_path = unzip_folder(zip_path, extract_to)

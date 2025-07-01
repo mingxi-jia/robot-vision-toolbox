@@ -11,10 +11,6 @@ sys.path.append('./')
 from example_data.pcd_utils import *
     
 
-data_path = "/home/xhe71/Desktop/robotool_data/06232025/slow"
-output_folder = os.path.join(data_path, "pcd")
-os.makedirs(output_folder,  exist_ok=True)
-
 
 def visualize_pcd_loop(pcd_sequence):
     assert len(pcd_sequence) > 0, "No point clouds provided"
