@@ -20,23 +20,13 @@ from vitpose_model import ViTPoseModel
 import json
 from typing import Dict, Optional
 
-def detect_hand(args):
+def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer):
     min_score = 0.75
     with open(args.intrinsics_path, 'r') as f:
         camera_intrinsics = json.load(f)
 
-    # Download and load checkpoints
-    download_models(CACHE_DIR_HAMER)
-    model, model_cfg = load_hamer(args.checkpoint)
-
-    # Setup HaMeR model
-    if torch.cuda.is_available():
-        device = torch.device('cuda')
-    else:
-        device = torch.device('cpu')
-    torch.backends.cudnn.benchmark = True
-    model = model.to(device)
-    model.eval()
+    model = hamer_model
+    device = model.device
 
     # Load detector
     from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
@@ -57,11 +47,6 @@ def detect_hand(args):
         detectron2_cfg.model.roi_heads.box_predictor.test_nms_thresh   = 0.4
         detector       = DefaultPredictor_Lazy(detectron2_cfg)
 
-    # keypoint detector
-    cpm = ViTPoseModel(device)
-
-    # Setup the renderer
-    renderer = Renderer(model_cfg, faces=model.mano.faces)
 
     # Make output directory if it does not exist
     os.makedirs(args.out_folder, exist_ok=True)
@@ -159,7 +144,7 @@ def detect_hand(args):
         right = np.array([best_hand["is_right"]])
 
         # Run reconstruction on all detected hands
-        dataset = ViTDetDataset(model_cfg, img_cv2, boxes, right, rescale_factor=args.rescale_factor)
+        dataset = ViTDetDataset(hamer_model_cfg, img_cv2, boxes, right, rescale_factor=args.rescale_factor)
         dataloader = torch.utils.data.DataLoader(
             dataset,
             batch_size=args.batch_size,
@@ -190,7 +175,7 @@ def detect_hand(args):
             box_size = batch["box_size"].float()
             img_size = batch["img_size"].float()
             multiplier = (2*batch['right']-1)
-            scaled_focal_length = model_cfg.EXTRA.FOCAL_LENGTH / model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+            scaled_focal_length = hamer_model_cfg.EXTRA.FOCAL_LENGTH / hamer_model_cfg.MODEL.IMAGE_SIZE * img_size.max()
             pred_cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).detach().contiguous().cpu().numpy()
 
             # Render the result
@@ -269,14 +254,17 @@ def detect_hand(args):
                 all_hand_results[hand_key]["pred_cam_t"] = translation.tolist()
                 
                 cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+
             # Overlay image
-            if args.debug:
+            debug = False
+            if debug:
                 # Save binary mask of rendered hand (from alpha channel)
                 
                 input_img = img_cv2.astype(np.float32)[:,:,::-1]/255.0
                 input_img = np.concatenate([input_img, np.ones_like(input_img[:,:,:1])], axis=2) # Add alpha channel
                 input_img_overlay = input_img[:,:,:3] * (1-cam_view[:,:,3:]) + cam_view[:,:,:3] * cam_view[:,:,3:]
                 cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_all.jpg'), 255*input_img_overlay[:, :, ::-1])
+                
         elif len(all_verts) > 0:
             # Even without rendering, still compute translation
             dummy_mask = np.ones_like(depth_img, dtype=np.uint8) * 255

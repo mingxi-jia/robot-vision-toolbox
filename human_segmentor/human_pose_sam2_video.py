@@ -34,10 +34,7 @@ from human_segmentor.util import convert_image_format
 
 from pathlib import Path
 
-# Load SAM2 Model
-CHECKPOINT = "submodules/segment-anything-2-real-time/checkpoints/sam2.1_hiera_large.pt"
-CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
-predictor = build_sam2_video_predictor(CONFIG, CHECKPOINT)
+
 
 
 def show_mask(mask, ax, obj_id=None, random_color=False):
@@ -217,7 +214,7 @@ def remove_masked_depth_points(depth_image: np.ndarray, mask: np.ndarray, intrin
 
     return masked_depth
 
-def run_sam2_segmentation(source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1):
+def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1):
     # convert all files to jpg first
     if not any(f.lower().endswith(".jpg") for f in os.listdir(source_frames)):
         convert_image_format(source_frames, ".jpg")

@@ -146,24 +146,26 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
             rgb = np.asarray(Image.open(rgb_path).convert('RGB'))
             depth = np.load(depth_path) / 1000.
 
-            # Plot side-by-side
-            plt.figure(figsize=(12, 5))
+            vis = False
+            if vis:
+                # Plot side-by-side
+                plt.figure(figsize=(12, 5))
 
-            # Show color image
-            plt.subplot(1, 2, 1)
-            plt.title(f"{cam_name} Color Image")
-            plt.imshow(rgb)
-            plt.axis('off')
+                # Show color image
+                plt.subplot(1, 2, 1)
+                plt.title(f"{cam_name} Color Image")
+                plt.imshow(rgb)
+                plt.axis('off')
 
-            # Show depth map
-            plt.subplot(1, 2, 2)
-            plt.title(f"{cam_name} Depth Map")
-            plt.imshow(depth, cmap='plasma')  # or 'gray' or 'viridis'
-            plt.colorbar(label='Depth')
-            plt.axis('off')
+                # Show depth map
+                plt.subplot(1, 2, 2)
+                plt.title(f"{cam_name} Depth Map")
+                plt.imshow(depth, cmap='plasma')  # or 'gray' or 'viridis'
+                plt.colorbar(label='Depth')
+                plt.axis('off')
 
-            plt.tight_layout()
-            # plt.show()
+                plt.tight_layout()
+                # plt.show()
 
             pcd_np, pcd_o3d = convert_RGBD_to_open3d(rgb, depth, info_dict[cam_name]['intrinsics'], info_dict[cam_name]['extrinsics'])
             all_pcds += pcd_o3d
@@ -204,5 +206,5 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
         
     return frame_sequence
 
-frame_sequence = generate_pcd_sequence(data_path, start_frame=0, sphere_cam=3)
+# frame_sequence = generate_pcd_sequence(data_path, start_frame=0, sphere_cam=3)
 

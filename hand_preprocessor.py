@@ -1,6 +1,9 @@
 import os
 import argparse
 import time
+
+import torch
+from hamer.configs import CACHE_DIR_HAMER
 from hamer_detector.video_preprocessor import subsample_video
 from hamer_detector.demo import detect_hand 
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
@@ -16,26 +19,43 @@ import matplotlib.pyplot as plt
 from hamer_detector.KF_smoothing import smooth_hand_pose_json_KF
 from human_segmentor.util import rename_images_sequentially
 from human_segmentor.sphere_pcd import generate_pcd_sequence
+from vitpose_model import ViTPoseModel
+from hamer.utils.renderer import Renderer, cam_crop_to_full
 
+from sam2.build_sam import build_sam2_video_predictor
 
-class PreprocessSinglePipeline:
+class HandPreprocessor:
     SAMPLE_RATE = 2
 
-    def __init__(self, episode_path,  cam_num = 1, debug = False):
-        self.cam_dir = os.path.join(os.path.abspath(episode_path), f'cam{cam_num}')
-        self.video_path = os.path.join(self.cam_dir, 'rgb')
-        self.depth_img_dir =  os.path.join(self.cam_dir, 'depth')
-        self.tmp_img_dir = os.path.join(self.cam_dir, 'tmp_images')
-        rename_images_sequentially(self.video_path, '.png')
-        rename_images_sequentially(self.depth_img_dir, '.npy')
-        self.segmentation_out_dir =os.path.join(self.cam_dir, 'segment_out')
-        self.hamer_out_dir = os.path.join(self.cam_dir, 'hamer_out')
-        self.sphere_out_dir = os.path.join(self.cam_dir, 'output')
-        self.background_img = f"setup/cam{cam_num}_background.png"
-        
-        self.intrinsics_path = f"setup/intrinsics_cam{cam_num}.json"
-        self.cam_num = cam_num
-        self.debug = debug
+    def __init__(self):
+        # Download and load checkpoints
+        download_models(CACHE_DIR_HAMER)
+        model, model_cfg = load_hamer(DEFAULT_CHECKPOINT)
+
+        # Setup HaMeR model
+        if torch.cuda.is_available():
+            device = torch.device('cuda')
+        else:
+            device = torch.device('cpu')
+        torch.backends.cudnn.benchmark = True
+
+        self.model_cfg = model_cfg
+        self.model = model.to(device)
+        self.model.eval()
+
+        # keypoint detector
+        self.cpm = ViTPoseModel(device)
+
+        # Setup the renderer
+        self.renderer = Renderer(model_cfg, faces=model.mano.faces)
+
+        # init sam
+        # Load SAM2 Model
+        CHECKPOINT = "submodules/segment-anything-2-real-time/checkpoints/sam2.1_hiera_large.pt"
+        CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
+        self.predictor = build_sam2_video_predictor(CONFIG, CHECKPOINT)
+
+        self.debug = False  # Set to True to save mesh and visualize
 
     def hamer_mask(self):
         """Run the HaMeR hand detection model."""
@@ -47,24 +67,23 @@ class PreprocessSinglePipeline:
             intrinsics_path=self.intrinsics_path,
             side_view=False,
             full_frame=True,
-            save_mesh=self.debug,
+            save_mesh=False,
             batch_size=48,
             rescale_factor=1.0,
             body_detector="regnety",
             file_type=["*.jpg", "*.png"],
-            debug=self.debug
         )
-        detect_hand(hamer_args)
+        detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.renderer)
         smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'),
                                  skip_rate=self.SAMPLE_RATE)
         convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
         print("Step 2: HaMeR hand detection completed.")
         
-    def segment_human(self):
+    def segment_human(self, cam_num):
         """Segment the human from the background using SAM."""
-        run_sam2_segmentation(self.tmp_img_dir, self.hamer_out_dir, self.depth_img_dir,
+        run_sam2_segmentation(self.predictor, self.tmp_img_dir, self.hamer_out_dir, self.depth_img_dir,
                               self.intrinsics_path, self.segmentation_out_dir,
-                              self.background_img, self.debug, ref_cam=self.cam_num)
+                              self.background_img, self.debug, ref_cam=cam_num)
         segmented_rgb_dir = os.path.join(self.segmentation_out_dir, "segmented_rgb")
         segmented_depth_dir = os.path.join(self.segmentation_out_dir, "segmented_depth")
         convert_images_to_video(segmented_rgb_dir, framerate=30 // self.SAMPLE_RATE)
@@ -81,8 +100,20 @@ class PreprocessSinglePipeline:
         print("Step 4: Sphere rendering completed.")    
     
     
-    def process(self):
+    def process(self, episode_path, cam_num):
         """Run the entire preprocessing pipeline."""
+        self.cam_dir = os.path.join(os.path.abspath(episode_path), f'cam{cam_num}')
+        self.video_path = os.path.join(self.cam_dir, 'rgb')
+        self.depth_img_dir =  os.path.join(self.cam_dir, 'depth')
+        self.tmp_img_dir = os.path.join(self.cam_dir, 'tmp_images')
+        rename_images_sequentially(self.video_path, '.png')
+        rename_images_sequentially(self.depth_img_dir, '.npy')
+        self.segmentation_out_dir =os.path.join(self.cam_dir, 'segment_out')
+        self.hamer_out_dir = os.path.join(self.cam_dir, 'hamer_out')
+        self.sphere_out_dir = os.path.join(self.cam_dir, 'output')
+        self.background_img = f"setup/cam{cam_num}_background.png"
+        self.intrinsics_path = f"setup/intrinsics_cam{cam_num}.json"
+
         start_time = time.time()
         print("🔹 Step 0: Preparing image frames and background...")
 
@@ -106,7 +137,7 @@ class PreprocessSinglePipeline:
             print("🔹 Step 1: Skipping frame copy, tmp images already exist.")
 
         self.hamer_mask()
-        self.segment_human()
+        self.segment_human(cam_num)
         self.render_spheres()
 
         end_time = time.time()
@@ -131,6 +162,6 @@ if __name__ == "__main__":
 
     for cam_id in [1, 2, 3]:
         print(f"\n========= Processing Camera {cam_id} =========")
-        pipeline = PreprocessSinglePipeline(args.episode_path, cam_num=cam_id, debug=args.debug)
+        pipeline = HandPreprocessor(args.episode_path, cam_num=cam_id, debug=args.debug)
         pipeline.process()
     generate_pcd_sequence(args.episode_path, start_frame=0, sphere_cam=3)

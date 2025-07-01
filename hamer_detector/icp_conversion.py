@@ -2,7 +2,6 @@ import numpy as np
 import cv2
 import open3d as o3d
 from scipy.spatial.transform import Rotation as R
-import pyrealsense2 as rs
 import json
 import trimesh
 import os
