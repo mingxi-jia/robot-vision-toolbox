@@ -57,7 +57,7 @@ class HandPreprocessor:
 
         self.debug = False  # Set to True to save mesh and visualize
 
-    def hamer_mask(self):
+    def hamer_mask(self, shortened=False):
         """Run the HaMeR hand detection model."""
         hamer_args = argparse.Namespace(
             checkpoint=DEFAULT_CHECKPOINT,
@@ -73,7 +73,7 @@ class HandPreprocessor:
             body_detector="regnety",
             file_type=["*.jpg", "*.png"],
         )
-        detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.renderer)
+        detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.renderer, shortened)
         smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'),
                                  skip_rate=self.SAMPLE_RATE)
         convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
@@ -135,10 +135,13 @@ class HandPreprocessor:
                         os.symlink(src, dst)
         else:
             print("🔹 Step 1: Skipping frame copy, tmp images already exist.")
-
-        self.hamer_mask()
+        if cam_num == 3:
+            self.hamer_mask(shortened=False)
+        else:
+            self.hamer_mask(shortened=True)
         self.segment_human(cam_num)
-        self.render_spheres()
+        if cam_num == 3:
+            self.render_spheres()
 
         end_time = time.time()
         print(f"✅ Pipeline completed. Processed {img_count} frames in {round(end_time - start_time, 2)} seconds.")

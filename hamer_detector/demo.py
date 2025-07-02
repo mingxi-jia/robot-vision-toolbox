@@ -20,14 +20,14 @@ from vitpose_model import ViTPoseModel
 import json
 from typing import Dict, Optional
 
-def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer):
+def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer, shortened=False):
     min_score = 0.75
     with open(args.intrinsics_path, 'r') as f:
         camera_intrinsics = json.load(f)
 
     model = hamer_model
     device = model.device
-
+    
     # Load detector
     from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
     if args.body_detector == 'vitdet':
@@ -60,6 +60,9 @@ def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer):
 
     for img_path in img_paths:
         img_timer = time.time()
+        if shortened and len(all_hand_results) >= 6:
+            print("⏭️  Skipping further frames due to shortened mode.")
+            break
         # Process image
         img_cv2 = cv2.imread(str(img_path))
         if img_cv2 is None:
