@@ -171,7 +171,7 @@ def rename_images_sequentially(folder_path: str, ext: str = ".png"):
     """
     valid_exts = (".png", ".jpg", ".jpeg", ".npy")
     files = sorted([f for f in os.listdir(folder_path) if f.lower().endswith(valid_exts)])
-    for idx, filename in enumerate(files, start=1):
+    for idx, filename in enumerate(files, start=0):
         new_name = f"{idx:06d}{ext}"
         old_path = os.path.join(folder_path, filename)
         new_path = os.path.join(folder_path, new_name)

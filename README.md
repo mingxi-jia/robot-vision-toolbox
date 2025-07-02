@@ -1,11 +1,7 @@
-# 0. conda env
+ # 0. conda env
 ```
 conda create --name robotool python=3.10
-conda activate hamer
-
-git clone git@github.com:SaulBatman/robot-vision-toolbox.git
-cd robot-vision-toolbox
-export PYTHONPATH=/YOURPATH/robot-vision-toolbox:$PYTHONPATH
+conda activate robotool
 ```
 
 # 1. real-time video segmentor
@@ -15,8 +11,7 @@ pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https
 
 # install realtime sam
 git clone https://github.com/Gy920/segment-anything-2-real-time.git ./submodules/segment-anything-2-real-time
-cd ./submodules/segment-anything-2-real-time && pip install -e .
-cd checkpoints && ./download_ckpts.sh
+cd segment-anything-2-real-time && pip install -e .
 export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH
 # install other necessary packages:
 pip install mediapipe
@@ -52,6 +47,7 @@ python pipeline.py
 --debug 
 
 ```
+
 # visualize pcd output:
 
 ```
@@ -100,49 +96,40 @@ video.mp4
 ### 1. preprocess video
 ```
 python hamer_detector/video_preprocessor.py
-
-# hamer detection
-python hamer_detector/demo.py --img_folder hamer_detector/example_data/realsense-test --out_folder hamer_detector/example_data/realsense-test-hamer --batch_size=48 --save_mesh"
-
-# render sphere based on hamer results
-python hamer_detector/sphere_renderer.py
+```
+### 2. hamer detection
+```
+python hamer_detector/demo.py \
+  --img_folder path/to/your/images \
+  --out_folder path/to/output_folder \
+  --batch_size=48 
+  --save_mesh 
 ```
 
-# 3. fix your PC
-There are occasions when roboticists need to deal with computer problems. Here are some solutions for some cases.
-1. docker is taking up a lot root space
+### 3. Human Segmentation
+
+run segmentation to remove human from the scene. 
 ```
-# check your root
-sudo ncdu -x /
-docker info | grep 'Docker Root Dir'
-# move your docker files to home
-# reference: https://medium.com/@calvineotieno010/change-docker-default-root-data-directory-a1d9271056f4
-sudo systemctl stop docker
-sudo vim /etc/docker/daemon.json
-# add this into /etc/docker/daemon.json
-#{
-#  "data-root": "/newpath"
-#}
-# Move the files
-sudo rsync -axPS /var/lib/docker/ /home/mingxi/docker
-# restart docker
-sudo systemctl start docker
-docker info | grep 'Docker Root Dir'
-# delete the old folder (double check before you do this!)
-sudo rm -r /var/lib/docker 
-# clean builder cache just in case
-docker builder prune
-sudo docker rmi $(sudo docker images -f "dangling=true" -q)
+python human_segmentor/human_pose_segmentor_mp_sam.py
 ```
-2. clean your root
-   ```
-   sudo apt autoclean
-   sudo apt autoremove
-   sudo apt clean all
-   # delete old snap archive
-   snap list --all
-   sudo snap remove firefox --revision=6159
-   ```
+
+### 4. Rendering with DiscoBall
+```
+python /human_segmentor/replace_hand_with_sphere.py
+--hamer_out_dir PATH_TO_THE_HAMER_PROCESSED_DATA
+--segmentation_out_dir PATH_TO_SEGMENTED_DATA
+--sphere_out_dir OUTPUT_DIRECTORY
+```
+
+### 5. side note: convert a folder of images into a video
+To turn image folder into videos, open terminal and run:
+```
+ls *.png | sort -V | awk '{print "file '\''" $0 "'\''"}' > list.txt
+
+
+ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_video.mp4
+
+```
 # TODOs
 - [x] sam segmentor
 - [x] single-view video segmentation
