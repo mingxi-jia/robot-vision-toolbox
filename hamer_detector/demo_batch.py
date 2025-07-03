@@ -56,23 +56,28 @@ def detect_hand(args):
     os.makedirs(args.out_folder, exist_ok=True)
 
     img_paths = [img for ext in args.file_type for img in Path(args.img_folder).glob(ext)]
+    # sort
+    img_paths.sort(key=lambda x: int(x.stem.split('_')[0]))  # Assuming filenames are like "00001.jpg"
     all_hand_results = {}
     all_verts, all_cam_t, all_right, batched_entries = [], [], [], []
 
+    starting_time = time.time()
+
+    # load images and get ViTPose predictions
     for img_path in img_paths:
         print(f"\n🖼️ Processing image: {img_path.name}")
         img_cv2 = cv2.imread(str(img_path))
         h, w = img_cv2.shape[:2]
         img_fn = os.path.splitext(os.path.basename(img_path))[0]
-        frame_id = int(img_fn.split('_')[1])
+        frame_id = int(img_fn.split('_')[0])
 
         depth_img = None
         for f in os.listdir(args.depth_folder):
             if f.endswith(f"{frame_id}.npy"):
-                depth_img = np.load(os.path.join(args.depth_folder, f))
+                depth_img = np.load(os.path.join(args.depth_folder, f))  / 1000.
                 break
             elif f.endswith(f"{frame_id}.png"):
-                depth_img = cv2.imread(os.path.join(args.depth_folder, f), cv2.IMREAD_UNCHANGED) / 1000
+                depth_img = cv2.imread(os.path.join(args.depth_folder, f), cv2.IMREAD_UNCHANGED) / 1000.
                 if depth_img.shape != (h, w):
                     raise ValueError("Depth and image shape mismatch")
                 break
@@ -117,9 +122,11 @@ def detect_hand(args):
 
     boxes = np.array([e["bbox"] for e in batched_entries])
     rights = np.array([e["is_right"] for e in batched_entries])
-    dataset = ViTDetDataset(model_cfg, batched_entries, rescale_factor=args.rescale_factor, boxes = boxes, right = rights)
+    imgs = np.array([e["img_cv2"] for e in batched_entries])
+    dataset = ViTDetDataset(model_cfg, imgs, rescale_factor=args.rescale_factor, boxes = boxes, right = rights)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
 
+    # predict Hamer
     for i, batch in enumerate(dataloader):
         start_idx = i * args.batch_size
         batch = recursive_to(batch, device)
@@ -161,54 +168,65 @@ def detect_hand(args):
             all_cam_t.append(cam_t)
             all_right.append(is_right)
 
-            if args.save_mesh:
+            save_mesh = False
+            if save_mesh:
                 mesh = renderer.vertices_to_trimesh(verts, cam_t, LIGHT_BLUE, is_right=bool(is_right))
                 mesh.export(os.path.join(args.out_folder, f'{img_fn}.obj'))
 
-    # Rendering full image, hand mask, overlay, and updating translation
-    if len(all_verts) > 0:
-        # Render RGBA for all hands
-        cam_view = renderer.render_rgba_multiple(
-            all_verts, cam_t=all_cam_t,
-            render_res=img_size[n], is_right=all_right,
-            mesh_base_color=LIGHT_BLUE,
-            scene_bg_color=(1, 1, 1),
-            focal_length=scaled_focal_length
-        )
-        # Save hand mask as <img_fn>_handmask.png
-        last_img_fn = batched_entries[-1]["img_fn"]
-        hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
-        mask_path = os.path.join(args.out_folder, f'{last_img_fn}_handmask.png')
-        cv2.imwrite(mask_path, hand_mask)
+    # depth align and filtering and hand mask rendering
+    for i, img_path in enumerate(img_paths):
+        print(f"\n🖼️ Processing image: {img_path.name}")
+        img_cv2 = cv2.imread(str(img_path))
+        h, w = img_cv2.shape[:2]
+        img_fn = os.path.splitext(os.path.basename(img_path))[0]
+        # Rendering full image, hand mask, overlay, and updating translation
+        v = all_verts[i]
+        if len(v) > 0:
+            # Render RGBA for all hands
+            cam_view = renderer.render_rgba_multiple(
+                all_verts[i][None,...], 
+                cam_t=all_cam_t[i][None,...],
+                render_res=img_size[n], 
+                is_right=[all_right[i]],
+                mesh_base_color=LIGHT_BLUE,
+                scene_bg_color=(1, 1, 1),
+                focal_length=scaled_focal_length
+            )
+            # Save hand mask as <img_fn>_handmask.png
+            hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
 
-        # Compute and update corrected translation using ICP
-        hamer_vertices = np.vstack(all_verts)
-        # Use the last image's depth and intrinsics
-        last_depth_img = batched_entries[-1]["depth_img"]
-        hand_pcd = extract_hand_point_cloud(hand_mask, last_depth_img, camera_intrinsics)
-        hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_pcd, hand_mask, camera_intrinsics)
-        translation = hamer_aligned.mean(axis=0)
-        all_hand_results[last_img_fn]["pred_cam_t"] = translation.tolist()
+            # Compute and update corrected translation using ICP
+            hamer_vertices = np.vstack(v)
+            # Use the last image's depth and intrinsics
+            depth_img = batched_entries[i]["depth_img"]
+            hand_pcd = extract_hand_point_cloud(hand_mask, depth_img, camera_intrinsics)
+            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_pcd, hand_mask, camera_intrinsics)
+            if hamer_aligned is None:
+                print(f"⏭️  Skipping frame {img_fn} due to poor depth quality.")
+                # Remove corresponding entry in all_hand_results if frame is skipped
+                if img_fn in all_hand_results:
+                    del all_hand_results[img_fn]
+                continue
+            else:
+                translation = hamer_aligned.mean(axis=0)
+                all_hand_results[img_fn]["pred_cam_t"] = translation.tolist()
+                
+                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
 
-        # Create overlay image and save as <img_fn>_all.jpg
-        bg = batched_entries[-1]["img_cv2"].astype(np.float32)[:, :, ::-1] / 255.0
-        bg = np.concatenate([bg, np.ones_like(bg[:, :, :1])], axis=2)
-        overlay = bg[:, :, :3] * (1 - cam_view[:, :, 3:]) + cam_view[:, :, :3] * cam_view[:, :, 3:]
-        overlay_path = os.path.join(args.out_folder, f'{last_img_fn}_all.jpg')
-        cv2.imwrite(overlay_path, 255 * overlay[:, :, ::-1])
 
     with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
         json.dump(all_hand_results, f, indent=2)
 
+    print(f"⏱️  Total processing time: {time.time() - starting_time:.2f} seconds")
     print("✅ Done")
         
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HaMeR demo code')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')
-    parser.add_argument('--img_folder', type=str, default='/home/xhe71/Desktop/robotool_data/Color/', help='Folder with input images')
-    parser.add_argument('--out_folder', type=str, default='/home/xhe71/Desktop/robotool_data/pipeline_output/', help='Output folder to save rendered results')
-    parser.add_argument('--depth_folder', type=str, default='/home/xhe71/Desktop/robotool_data/Depth', help='folder with depth image')
-    parser.add_argument('--intrinsics_path', default = 'camera_intrinsics_zed.json',  help='load the camera intrinsics for the realsense camera')
+    parser.add_argument('--img_folder', type=str, default='/home/mingxi/data/realworld/test/episode_0/cam1/rgb/', help='Folder with input images')
+    parser.add_argument('--out_folder', type=str, default='/home/mingxi/data/realworld/test/episode_0/cam1/pipeline_output/', help='Output folder to save rendered results')
+    parser.add_argument('--depth_folder', type=str, default='/home/mingxi/data/realworld/test/episode_0/cam1/depth/', help='folder with depth image')
+    parser.add_argument('--intrinsics_path', default = 'setup/intrinsics_cam1.json',  help='load the camera intrinsics for the realsense camera')
     # parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
     # parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
     parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=True, help='If set, save meshes to disk also')
