@@ -234,7 +234,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     points_with_labels = []
     frame_idx_list = []
 
-    selected_indices = np.linspace(1, len(hand_mask_paths) - 1, num=10, dtype=int)
+    selected_indices = np.linspace(1, len(hand_mask_paths) - 1, num=5, dtype=int)
     print(selected_indices)
     for i in selected_indices:
         mask_path = hand_mask_paths[i]
