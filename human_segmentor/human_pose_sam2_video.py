@@ -324,9 +324,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
                 depth_path = os.path.join(depth_folder, depth_name)
                 if os.path.exists(depth_path):
                     depth = np.load(depth_path)
-                    with open(intrinsics, "r") as f:
-                        intr = json.load(f)
-                    masked_depth, points = remove_masked_depth_points(depth, binary_mask, intr)
+                    masked_depth, points = remove_masked_depth_points(depth, binary_mask, intrinsics)
 
                     result_depth = masked_depth
                         
@@ -345,7 +343,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
 
 # if __name__ == "__main__":
 #     ref_cam = 3
-#     intrinsics_path = f"setup/intrinsics_cam{ref_cam}.json"
+#     intrinsics_path = f"configs/intrinsics_cam{ref_cam}.json"
 #     source_frames = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb/"  # <-- Replace with your actual folder path
 #     hand_mask_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/rgb_hamer"
 #     depth_dir = f"/home/xhe71/Desktop/robotool_data/06232025/slow/cam{ref_cam}/depth/"

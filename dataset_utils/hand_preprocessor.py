@@ -1,6 +1,9 @@
 import os
 import argparse
 import time
+import yaml
+from pathlib import Path
+import numpy as np
 
 import torch
 from hamer.configs import CACHE_DIR_HAMER
@@ -24,24 +27,56 @@ from hamer.utils.renderer import Renderer, cam_crop_to_full
 
 from sam2.build_sam import build_sam2_video_predictor
 
-class HandPreprocessor:
-    SAMPLE_RATE = 2
+def read_camera_info(camera_info_path: str) -> dict:
+    # process raw camera info to hamer-compatible format
+    with open(camera_info_path, 'r') as f:
+        camera_info = yaml.safe_load(f)
+    cam_list = camera_info.keys()
+    for cam in cam_list:
+        intrinsics = np.array(camera_info[cam]['k']).reshape(3, 3)
+        camera_info[cam]['fx'] = intrinsics[0, 0]
+        camera_info[cam]['fy'] = intrinsics[1, 1]
+        camera_info[cam]['cx'] = intrinsics[0, 2]
+        camera_info[cam]['cy'] = intrinsics[1, 2]
+    return camera_info
 
-    def __init__(self):
+class HandPreprocessor:
+    SAMPLE_RATE = 1
+
+    def __init__(self, dataset_path: str):
         # Download and load checkpoints
         download_models(CACHE_DIR_HAMER)
         model, model_cfg = load_hamer(DEFAULT_CHECKPOINT)
-
         # Setup HaMeR model
         if torch.cuda.is_available():
             device = torch.device('cuda')
         else:
             device = torch.device('cpu')
         torch.backends.cudnn.benchmark = True
-
         self.model_cfg = model_cfg
         self.model = model.to(device)
         self.model.eval()
+
+        # Load detector
+        from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
+        body_detector = "regnety"
+        if body_detector == 'vitdet':
+            from detectron2.config import LazyConfig
+            import hamer
+            cfg_path = Path(hamer.__file__).parent/'configs'/'cascade_mask_rcnn_vitdet_h_75ep.py'
+            detectron2_cfg = LazyConfig.load(str(cfg_path))
+            detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
+            for i in range(3):
+                detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = 0.5
+            detector = DefaultPredictor_Lazy(detectron2_cfg)
+        elif body_detector == 'regnety':
+            from detectron2 import model_zoo
+            from detectron2.config import get_cfg
+            detectron2_cfg = model_zoo.get_config('new_baselines/mask_rcnn_regnety_4gf_dds_FPN_400ep_LSJ.py', trained=True)
+            detectron2_cfg.model.roi_heads.box_predictor.test_score_thresh = 0.5
+            detectron2_cfg.model.roi_heads.box_predictor.test_nms_thresh   = 0.4
+            detector       = DefaultPredictor_Lazy(detectron2_cfg)
+        self.detectron = detector
 
         # keypoint detector
         self.cpm = ViTPoseModel(device)
@@ -49,15 +84,21 @@ class HandPreprocessor:
         # Setup the renderer
         self.renderer = Renderer(model_cfg, faces=model.mano.faces)
 
-        # init sam
         # Load SAM2 Model
         CHECKPOINT = "submodules/segment-anything-2-real-time/checkpoints/sam2.1_hiera_large.pt"
         CONFIG = "configs/sam2.1/sam2.1_hiera_l.yaml"
         self.predictor = build_sam2_video_predictor(CONFIG, CHECKPOINT)
 
+        # read yaml
+        self.camera_info = read_camera_info('configs/camera_info.yaml')
+
         self.debug = False  # Set to True to save mesh and visualize
 
-    def hamer_mask(self, shortened=False):
+        self.process_path = os.path.join(dataset_path, "output")
+        os.makedirs(self.process_path, exist_ok=True)
+
+
+    def hamer_mask(self, cam_num, shortened=False):
         """Run the HaMeR hand detection model."""
         hamer_args = argparse.Namespace(
             checkpoint=DEFAULT_CHECKPOINT,
@@ -73,34 +114,37 @@ class HandPreprocessor:
             body_detector="regnety",
             file_type=["*.jpg", "*.png"],
         )
-        detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.renderer, shortened)
-        smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'),
-                                 skip_rate=self.SAMPLE_RATE)
-        convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
+        camera_intrinsics = self.camera_info[f'cam{cam_num}']
+        detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.detectron, self.renderer, camera_intrinsics, shortened, batch_mode=True)
+        if cam_num == 3:
+            smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
+            convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
         print("Step 2: HaMeR hand detection completed.")
         
     def segment_human(self, cam_num):
         """Segment the human from the background using SAM."""
         run_sam2_segmentation(self.predictor, self.tmp_img_dir, self.hamer_out_dir, self.depth_img_dir,
-                              self.intrinsics_path, self.segmentation_out_dir,
+                              self.camera_info[f'cam{cam_num}'], self.segmentation_out_dir,
                               self.background_img, self.debug, ref_cam=cam_num)
         segmented_rgb_dir = os.path.join(self.segmentation_out_dir, "segmented_rgb")
         segmented_depth_dir = os.path.join(self.segmentation_out_dir, "segmented_depth")
         convert_images_to_video(segmented_rgb_dir, framerate=30 // self.SAMPLE_RATE)
         print("Step 3: Human segmentation completed.")  
     
-    def render_spheres(self):
+    def render_spheres(self, cam_num):
         """Render spheres in place of hands."""
         segmented_rgb_dir = os.path.join(self.segmentation_out_dir, "segmented_rgb")
         segmented_depth_dir = os.path.join(self.segmentation_out_dir, "segmented_depth")
         replace_sphere(self.hamer_out_dir, segmented_rgb_dir, segmented_depth_dir,
-                       self.sphere_out_dir, self.intrinsics_path,
+                       self.sphere_out_dir, self.camera_info[f'cam{cam_num}'],
                        ori_depth_folder=self.depth_img_dir, debug=self.debug)
         convert_images_to_video(self.sphere_out_dir, framerate=30 // self.SAMPLE_RATE)
         print("Step 4: Sphere rendering completed.")    
     
     
     def process(self, episode_path, cam_num):
+        data_path, episode_name = os.path.split(episode_path)
+
         """Run the entire preprocessing pipeline."""
         self.cam_dir = os.path.join(os.path.abspath(episode_path), f'cam{cam_num}')
         self.video_path = os.path.join(self.cam_dir, 'rgb')
@@ -108,11 +152,13 @@ class HandPreprocessor:
         self.tmp_img_dir = os.path.join(self.cam_dir, 'tmp_images')
         rename_images_sequentially(self.video_path, '.png')
         rename_images_sequentially(self.depth_img_dir, '.npy')
-        self.segmentation_out_dir =os.path.join(self.cam_dir, 'segment_out')
-        self.hamer_out_dir = os.path.join(self.cam_dir, 'hamer_out')
-        self.sphere_out_dir = os.path.join(self.cam_dir, 'output')
-        self.background_img = f"setup/cam{cam_num}_background.png"
-        self.intrinsics_path = f"setup/intrinsics_cam{cam_num}.json"
+        self.background_img = f"configs/cam{cam_num}_background.png"
+        self.intrinsics_path = f"configs/intrinsics_cam{cam_num}.json"
+
+        process_data_path = os.path.join(self.process_path, episode_name, f'cam{cam_num}')
+        self.segmentation_out_dir =os.path.join(process_data_path, 'segment_out')
+        self.hamer_out_dir = os.path.join(process_data_path, 'hamer_out')
+        self.sphere_out_dir = process_data_path
 
         start_time = time.time()
         print("🔹 Step 0: Preparing image frames and background...")
@@ -120,6 +166,7 @@ class HandPreprocessor:
         img_count = len([f for f in os.listdir(self.video_path)
                          if f.lower().endswith(('.jpg', '.png'))]) // self.SAMPLE_RATE
 
+        # create tmp data for processing
         if not os.path.exists(self.tmp_img_dir) or len(os.listdir(self.tmp_img_dir)) == 0:
             print("🔹 Step 1: Copying frames...")
             os.makedirs(self.tmp_img_dir, exist_ok=True)
@@ -135,16 +182,25 @@ class HandPreprocessor:
                         os.symlink(src, dst)
         else:
             print("🔹 Step 1: Skipping frame copy, tmp images already exist.")
-        if cam_num == 3:
-            self.hamer_mask(shortened=False)
-        else:
-            self.hamer_mask(shortened=True)
-        self.segment_human(cam_num)
-        if cam_num == 3:
-            self.render_spheres()
+        print(f"Preprocessing takes {time.time() - start_time:.2f} seconds for {img_count} frames.")
+        start_time = time.time()
+        
+        # run hamer to get hand poses and masks
+        shortened = False if cam_num == 3 else True
+        self.hamer_mask(cam_num, shortened=shortened)
+        print(f"Hamer processing takes {time.time() - start_time:.2f} seconds for {img_count} frames.")
+        start_time = time.time()
 
-        end_time = time.time()
-        print(f"✅ Pipeline completed. Processed {img_count} frames in {round(end_time - start_time, 2)} seconds.")
+        # run sam2 to segment human
+        self.segment_human(cam_num)
+        print(f"Human segmentation takes {time.time() - start_time:.2f} seconds for {img_count} frames.")
+        start_time = time.time()
+
+        # render spheres in place of hands
+        if cam_num == 3:
+            self.render_spheres(cam_num=cam_num)
+
+        print(f"✅ Pipeline completed. Processed {img_count} frames in {round(time.time() - start_time, 2)} seconds.")
         # delete the tmp images
         if os.path.exists(self.tmp_img_dir):
             for f in os.listdir(self.tmp_img_dir):

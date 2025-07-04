@@ -46,17 +46,9 @@ def uvz_to_world(u, v, z, intrinsics, extrinsics):
     return P_world[:3]
 
 
-def convert_hamer_pose_to_extrinsic(data_path, cam_name = 'cam3', intrinsics = None, extrinsics = None):
+def convert_hamer_pose_to_extrinsic(hand_data, intrinsics, extrinsics):
     pose_dict = {}
-        
-    hand_path = os.path.join(data_path, cam_name, 'output', 'sphere_pose.json')
-    if not os.path.exists(hand_path):
-        return None
-    with open(hand_path, 'r') as f:
-        hand_data = json.load(f)
 
-    if extrinsics is None:
-        extrinsics = np.eye(4)
     for frame_idx, key in enumerate(sorted(hand_data.keys())):
         sphere_center = np.array(hand_data[key]["uvz_handmask"])
         global_orient = np.array(hand_data[key]["global_orient_quat"])
@@ -68,67 +60,32 @@ def convert_hamer_pose_to_extrinsic(data_path, cam_name = 'cam3', intrinsics = N
         pose_dict[frame_name] = example_pose.tolist()
         # Removed cam_frame.transform(extrinsics)
     # Save to json
-    output_path = os.path.join(data_path, f'pose_dict.json')
-    with open(output_path, 'w') as f:
-        json.dump(pose_dict, f, indent=4)
-    print(f"Saved pose dict to {output_path}")
+    # output_path = os.path.join(data_path, f'pose_dict.json')
+    # with open(output_path, 'w') as f:
+    #     json.dump(pose_dict, f, indent=4)
+    # print(f"Saved pose dict to {output_path}")
     return pose_dict
         
         
-def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
-    # load camera_info.yaml
-    pcd_path = os.path.join(data_path, 'pcd')
-    if not os.path.exists(pcd_path):
-        os.makedirs(pcd_path)
-    with open(os.path.join('setup/camera_info.yaml'), 'r') as f:
-        cam_info = yaml.safe_load(f)
+def generate_pcd_sequence(episode_path, output_path, cam_info_dict, start_frame=0, sphere_cam = 3):
+    main_cam_name = f'cam{sphere_cam}'
+    data_path, episode_name = os.path.split(episode_path)
 
-    cam_views = [1,2, 3]
+    
+    cam_info = cam_info_dict
+
+    cam_views = [3]
     
             
-    frame_dict = dict()
-    info_dict = dict()
-    camera_frames = []
-    num_frames = 0
-    sphere_extrinsics = None
-    sphere_intrinsics = None
-    for i in cam_views:
-        cam_name = f'cam{i}'
-        intrinsics = np.array(cam_info[cam_name]['k']).reshape(3, 3)
-        extrinsics = get_extrinsics_matrix(cam_info[cam_name]['t'], cam_info[cam_name]['q'])
-        if i == sphere_cam:
-            sphere_extrinsics = extrinsics
-            sphere_intrinsics = intrinsics
-        info_dict[cam_name] = {'intrinsics': intrinsics, 'extrinsics': extrinsics}
-
-        frame_list = [f.split('.png')[0] for f in os.listdir(os.path.join(data_path, cam_name, 'rgb')) if f.endswith('.png')]
-        frame_list.sort(key=lambda x: (int(x.split('_')[0])))
-        if num_frames == 0:
-            num_frames = len(frame_list)
-        frame_dict[cam_name] = frame_list
-
-        cam_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.1)
-        cam_frame.transform(extrinsics)
-        camera_frames.append(cam_frame)
-
-    coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=.3, origin=[0, 0, 0])
-    camera_frames.append(coordinate_frame)
-
-    # o3d.visualization.draw_geometries(camera_frames)
+    cam_intrinsics = cam_info[main_cam_name]['intrinsics']
+    cam_extrinsics = cam_info[main_cam_name]['extrinsics']
 
     
     sphere_cam_name = f'cam{sphere_cam}'
-    pose_path = os.path.join(data_path, 'pose_dict.json')
-    if not os.path.exists(pose_path):
-        pose_dict = convert_hamer_pose_to_extrinsic(data_path, cam_name = sphere_cam_name, intrinsics = sphere_intrinsics, extrinsics = sphere_extrinsics)
-    else:
-        with open(pose_path, 'r') as f:
-            pose_dict = json.load(f)
-    pose_dict = convert_hamer_pose_to_extrinsic(data_path, cam_name = sphere_cam_name, intrinsics = sphere_intrinsics, extrinsics = sphere_extrinsics)
+    with open(os.path.join(output_path, episode_name, sphere_cam_name, 'sphere_pose.json'), 'r') as f:
+        hand_pose = json.load(f)
+    pose_dict = convert_hamer_pose_to_extrinsic(hand_pose, cam_intrinsics, cam_extrinsics)
 
-    # multi-view reconstruction example
-
-    
     frame_sequence = []
     
     for i, frame_idx in enumerate(sorted(pose_dict.keys())):
@@ -137,40 +94,20 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
             cam_name = f'cam{i}'
 
             # simulate different RGB and depth images for each view
-            rgb_path = os.path.join(data_path, cam_name, 'segment_out', 'segmented_rgb', f'{frame_idx}_segmented.png')
-            depth_path = os.path.join(data_path, cam_name, 'segment_out','segmented_depth', f'{frame_idx}_segmented.npy')
+            rgb_path = os.path.join(output_path, episode_name, cam_name, 'segment_out', 'segmented_rgb', f'{frame_idx}_segmented.png')
+            depth_path = os.path.join(output_path, episode_name, cam_name, 'segment_out','segmented_depth', f'{frame_idx}_segmented.npy')
             if not os.path.exists(rgb_path) or not os.path.exists(depth_path):
                 continue
             # Load RGB and depth images
             rgb = np.asarray(Image.open(rgb_path).convert('RGB'))
             depth = np.load(depth_path) / 1000.
             # Convert RGB and depth to Open3D point cloud
-            pcd_np, pcd_o3d = convert_RGBD_to_open3d(rgb, depth, info_dict[cam_name]['intrinsics'], info_dict[cam_name]['extrinsics'])
+            pcd_np, pcd_o3d = convert_RGBD_to_open3d(rgb, depth, cam_info[cam_name]['intrinsics'], cam_info[cam_name]['extrinsics'])
             all_pcds += pcd_o3d
         
-            vis = False
-            if vis:
-                # Plot side-by-side
-                plt.figure(figsize=(12, 5))
-
-                # Show color image
-                plt.subplot(1, 2, 1)
-                plt.title(f"{cam_name} Color Image")
-                plt.imshow(rgb)
-                plt.axis('off')
-
-                # Show depth map
-                plt.subplot(1, 2, 2)
-                plt.title(f"{cam_name} Depth Map")
-                plt.imshow(depth, cmap='plasma')  # or 'gray' or 'viridis'
-                plt.colorbar(label='Depth')
-                plt.axis('off')
-
-                plt.tight_layout()
-                # plt.show()
         # Downsample and filter point cloud
-        max_point_num = 4812
-        x_min, y_min, z_min, ws_size = 0, -1, -0.05, 2
+        max_point_num = 3000
+        x_min, y_min, z_min, ws_size = 0.2, -0.2, -0.05, 0.4
         all_pcds = filter_point_cloud_by_workspace(all_pcds, x_min, x_min+ws_size, y_min, y_min+ws_size, z_min, z_min+ws_size)
         all_pcds = all_pcds.farthest_point_down_sample(num_samples=max_point_num)
 
@@ -179,21 +116,13 @@ def generate_pcd_sequence(data_path, start_frame=0, sphere_cam = 3):
         sphere = render_pcd_from_pose(example_pose[None,...], fix_point_num=1024, model_type='sphere')[0]
         all_pcds += np2o3d(sphere[:, :3], sphere[:, 3:6])
 
-        # # Display the frame
-        # o3d.visualization.draw_geometries([all_pcds, coordinate_frame],
-        #                                   front=[1, 0.0, 0.8],
-        #                                   lookat=[0.0, 0.0, 0.0],
-        #                                   up=[-3.14, 0.98, 0.1],
-        #                                   zoom=0.7)
-
-        # # Wait briefly to hold the window before screenshot
-        # time.sleep(0.2)
-
+       
         # Save the point cloud for this frame
-        output_folder = os.path.join(data_path, 'pcd')
-        pcd_save_path = os.path.join(output_folder, f"{frame_idx}.ply")
-        o3d.io.write_point_cloud(pcd_save_path, all_pcds)
-        print(f"Saved PCD to {pcd_save_path}")
+        pcd_path = os.path.join(output_path, episode_name, 'pcd')
+        if not os.path.exists(pcd_path):
+            os.makedirs(pcd_path)
+        o3d.io.write_point_cloud(os.path.join(pcd_path, f"{frame_idx}.ply"), all_pcds)
+        print(f"Saved PCD to {pcd_path}")
         
         frame_sequence.append(all_pcds)
 

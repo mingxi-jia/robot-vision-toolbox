@@ -226,7 +226,7 @@ if __name__ == '__main__':
     parser.add_argument('--img_folder', type=str, default='/home/mingxi/data/realworld/test/episode_0/cam1/rgb/', help='Folder with input images')
     parser.add_argument('--out_folder', type=str, default='/home/mingxi/data/realworld/test/episode_0/cam1/pipeline_output/', help='Output folder to save rendered results')
     parser.add_argument('--depth_folder', type=str, default='/home/mingxi/data/realworld/test/episode_0/cam1/depth/', help='folder with depth image')
-    parser.add_argument('--intrinsics_path', default = 'setup/intrinsics_cam1.json',  help='load the camera intrinsics for the realsense camera')
+    parser.add_argument('--intrinsics_path', default = 'configs/intrinsics_cam1.json',  help='load the camera intrinsics for the realsense camera')
     # parser.add_argument('--side_view', dest='side_view', action='store_true', default=False, help='If set, render side view also')
     # parser.add_argument('--full_frame', dest='full_frame', action='store_true', default=True, help='If set, render all people together also')
     parser.add_argument('--save_mesh', dest='save_mesh', action='store_true', default=True, help='If set, save meshes to disk also')

@@ -131,21 +131,21 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, ca
         hamer_vertices[:, 1] += translation_2d[1] / camera_intrinsics['fy'] * hamer_vertices[:, 2]
 
     # Debug visualization of ICP alignment (depth point cloud, original, aligned)
-    import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
+    # import matplotlib.pyplot as plt
+    # from mpl_toolkits.mplot3d import Axes3D
 
-    fig = plt.figure(figsize=(10, 8))
-    ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(hand_point_cloud[:, 0], hand_point_cloud[:, 1], hand_point_cloud[:, 2], c='b', label='Depth Point Cloud', alpha=0.3)
-    ax.scatter(hamer_vertices[:, 0], hamer_vertices[:, 1], hamer_vertices[:, 2], c='r', label='Original HAMER Vertices', alpha=0.3)
-    ax.scatter(hamer_vertices[:, 0], hamer_vertices[:, 1], hamer_vertices[:, 2], c='g', label='Aligned HAMER Vertices', alpha=0.6)
+    # fig = plt.figure(figsize=(10, 8))
+    # ax = fig.add_subplot(111, projection='3d')
+    # ax.scatter(hand_point_cloud[:, 0], hand_point_cloud[:, 1], hand_point_cloud[:, 2], c='b', label='Depth Point Cloud', alpha=0.3)
+    # ax.scatter(hamer_vertices[:, 0], hamer_vertices[:, 1], hamer_vertices[:, 2], c='r', label='Original HAMER Vertices', alpha=0.3)
+    # ax.scatter(hamer_vertices[:, 0], hamer_vertices[:, 1], hamer_vertices[:, 2], c='g', label='Aligned HAMER Vertices', alpha=0.6)
 
-    ax.set_title('ICP Alignment Debug Visualization')
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z')
-    ax.legend()
-    plt.tight_layout()
+    # ax.set_title('ICP Alignment Debug Visualization')
+    # ax.set_xlabel('X')
+    # ax.set_ylabel('Y')
+    # ax.set_zlabel('Z')
+    # ax.legend()
+    # plt.tight_layout()
     # plt.show()
 
     return hamer_vertices

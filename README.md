@@ -25,8 +25,8 @@ pip install git+https://github.com/cansik/mesh-sequence-player.git@1.10.1
 git clone --recursive https://github.com/geopavlakos/hamer.git ./submodules/hamer
 cd ./submodules/hamer
 pip install -e .[all]
+cd ../..
 pip install -v -e third-party/ViTPose
-bash fetch_demo_data.sh
 ```
 Besides these files, you also need to download the MANO model. Please visit the MANO website and register to get access to the downloads section. We only require the right hand model. [MANO_RIGHT.pkl](https://mano.is.tue.mpg.de/) under the _DATA/data/mano folder.
 ```

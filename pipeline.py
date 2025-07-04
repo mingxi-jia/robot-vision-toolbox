@@ -91,17 +91,17 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
         hamer_args.intrinsics_path = args.intrinsics_path
     
     if cam_num == 1:
-        background_img = "setup/cam1_background.png"
-        depth_background_img = "setup/cam1_background.npy"
-        hamer_args.intrinsics_path = "setup/intrinsics_cam1.json"
+        background_img = "configs/cam1_background.png"
+        depth_background_img = "configs/cam1_background.npy"
+        hamer_args.intrinsics_path = "configs/intrinsics_cam1.json"
     elif cam_num == 2:
-        background_img = "setup/cam2_background.png"
-        depth_background_img = "setup/cam2_background.npy"
-        hamer_args.intrinsics_path = "setup/intrinsics_cam2.json"
+        background_img = "configs/cam2_background.png"
+        depth_background_img = "configs/cam2_background.npy"
+        hamer_args.intrinsics_path = "configs/intrinsics_cam2.json"
     elif cam_num == 3:
-        background_img = "setup/cam3_background.png"
-        depth_background_img = "setup/cam3_background.npy"
-        hamer_args.intrinsics_path = "setup/intrinsics_cam3.json"
+        background_img = "configs/cam3_background.png"
+        depth_background_img = "configs/cam3_background.npy"
+        hamer_args.intrinsics_path = "configs/intrinsics_cam3.json"
     intrinsics_path = hamer_args.intrinsics_path
 
     detect_hand(hamer_args)

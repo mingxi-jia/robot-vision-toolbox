@@ -24,6 +24,7 @@ import os
 import h5py
 import glob
 import json
+import time
 import copy
 import yaml
 import open3d as o3d
@@ -34,13 +35,18 @@ from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
 
 from vision_utils.pcd_utils import convert_RGBD_to_open3d, o3d2np
-from hand_preprocessor import HandPreprocessor as Hamer
+from dataset_utils.hand_preprocessor import HandPreprocessor as Hamer
 from human_segmentor.sphere_pcd import generate_pcd_sequence
 
-def load_info_dict(info_path: str):
+from example_data.pcd_utils import get_extrinsics_matrix
+
+def load_camera_info_dict(info_path: str):
     assert info_path.endswith(".yaml"), "Info file should be a yaml file"
     with open(info_path, 'r') as f:
         info_dict = yaml.safe_load(f)
+    for cam_name, cam_info in info_dict.items():
+        info_dict[cam_name]['intrinsics'] = np.array(cam_info['k']).reshape(3, 3)
+        info_dict[cam_name]['extrinsics'] = get_extrinsics_matrix(cam_info['t'], cam_info['q'])
     return info_dict
 
 def convert_state_to_action(states: list):
@@ -61,13 +67,12 @@ class RealToRobomimicConverter:
         num_cams = len(cam_list)
         num_episodes = len([f for f in os.listdir(real_dataset_path) if f.startswith("episode_")])
 
-        self.info_dict = load_info_dict(os.path.join(real_dataset_path, "camera_info.yaml"))
+        self.info_dict = load_camera_info_dict(os.path.join('configs', "camera_info.yaml"))
 
-        self.hamer = Hamer() #TODO(ivy)
-        
-        
+        self.hamer = Hamer(real_dataset_path) #TODO(ivy)
 
         self.real_dataset_path = real_dataset_path
+        self.process_path = os.path.join(real_dataset_path, "output")
         self.robomimic_dataset_path = output_robomimic_path
         self.robomimic_center = np.array([0, 0, 0.7])
 
@@ -87,11 +92,13 @@ class RealToRobomimicConverter:
 
     def preprocess(self, hamer: Hamer):
         for episode_idx in tqdm(range(self.num_episodes), desc="Preprocessing episodes"):
+            starting_time = time.time()
             episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
             for cam_id in [1, 2, 3]:
                 print(f"\n========= Processing Camera {cam_id} =========")
                 hamer.process(episode_path, cam_id)
-            generate_pcd_sequence(episode_path, start_frame=0, sphere_cam=3)
+            generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, start_frame=0, sphere_cam=3)
+            print(f"Episode {episode_idx} processed in {time.time() - starting_time:.2f} seconds.")
             # self.extract_actions(episode_idx)
             # self.extract_pcds(episode_idx)
 
@@ -312,6 +319,6 @@ class RealToRobomimicConverter:
 
 if __name__ == "__main__":
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")
-    converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71/Desktop/robotool_data/06232025/", output_robomimic_path="/home/xhe71/Desktop/robotool_data/06232025/episode_0/test_multiview_abs.hdf5")
+    converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
     converter.convert()
     

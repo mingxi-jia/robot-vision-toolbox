@@ -10,42 +10,30 @@ sys.path.append("./")
 from hamer.configs import CACHE_DIR_HAMER
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
-from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_STD
+from hamer.datasets.vitdet_dataset import ViTDetDataset, ViTDetDatasetBatch, DEFAULT_MEAN, DEFAULT_STD
 from hamer.utils.renderer import Renderer, cam_crop_to_full
 from hamer_detector.icp_conversion import extract_hand_point_cloud, compute_aligned_hamer_translation
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 import time
-from vitpose_model import ViTPoseModel
+
 
 import json
 from typing import Dict, Optional
+from tqdm import tqdm
 
-def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer, shortened=False):
+def detect_hand(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False, batch_mode=False):
+    if batch_mode:
+        detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
+    else:
+        detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
+
+def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False):
     min_score = 0.75
-    with open(args.intrinsics_path, 'r') as f:
-        camera_intrinsics = json.load(f)
 
     model = hamer_model
     device = model.device
     
-    # Load detector
-    from hamer.utils.utils_detectron2 import DefaultPredictor_Lazy
-    if args.body_detector == 'vitdet':
-        from detectron2.config import LazyConfig
-        import hamer
-        cfg_path = Path(hamer.__file__).parent/'configs'/'cascade_mask_rcnn_vitdet_h_75ep.py'
-        detectron2_cfg = LazyConfig.load(str(cfg_path))
-        detectron2_cfg.train.init_checkpoint = "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl"
-        for i in range(3):
-            detectron2_cfg.model.roi_heads.box_predictors[i].test_score_thresh = 0.5
-        detector = DefaultPredictor_Lazy(detectron2_cfg)
-    elif args.body_detector == 'regnety':
-        from detectron2 import model_zoo
-        from detectron2.config import get_cfg
-        detectron2_cfg = model_zoo.get_config('new_baselines/mask_rcnn_regnety_4gf_dds_FPN_400ep_LSJ.py', trained=True)
-        detectron2_cfg.model.roi_heads.box_predictor.test_score_thresh = 0.5
-        detectron2_cfg.model.roi_heads.box_predictor.test_nms_thresh   = 0.4
-        detector       = DefaultPredictor_Lazy(detectron2_cfg)
+    
 
 
     # Make output directory if it does not exist
@@ -58,16 +46,15 @@ def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer, shortened=Fal
     # Iterate over all images in folder
     all_hand_results = {}
 
-    for img_path in img_paths:
+    for img_path in tqdm(img_paths, desc="Processing images"):
         img_timer = time.time()
         if shortened and len(all_hand_results) >= 6:
             print("⏭️  Skipping further frames due to shortened mode.")
             break
         # Process image
         img_cv2 = cv2.imread(str(img_path))
-        if img_cv2 is None:
-            print(f"❌ Failed to read image: {img_path}")
-            continue
+        assert img_cv2 is not None, f"❌ Failed to read image: {img_path}"
+
         height, width = img_cv2.shape[:2]
         img_fn = os.path.splitext(os.path.basename(img_path))[0]
         frame_id = int(img_fn)
@@ -166,7 +153,7 @@ def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer, shortened=Fal
             inference_timer = time.time()
             batch = recursive_to(batch, device)
             with torch.no_grad():
-                with torch.cuda.amp.autocast(dtype=torch.float32):
+                with torch.amp.autocast('cuda', dtype=torch.float32):
                     out = model(batch)
                     
             # Inference complete
@@ -295,7 +282,187 @@ def detect_hand(args, hamer_model, hamer_model_cfg, cpm, renderer, shortened=Fal
     except Exception:
         pass
 
-        
+def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False):
+
+    model = hamer_model
+    device = model.device
+
+    os.makedirs(args.out_folder, exist_ok=True)
+
+    img_paths = [img for ext in args.file_type for img in Path(args.img_folder).glob(ext)]
+    # sort
+    img_paths.sort(key=lambda x: int(x.stem.split('_')[0]))  # Assuming filenames are like "00001.jpg"
+    all_hand_results = {}
+    all_verts, all_cam_t, all_right, batched_entries = [], [], [], []
+
+    starting_time = time.time()
+
+    # load images and get ViTPose predictions
+    for img_path in img_paths:
+        # only process very first frames for shortened mode
+        if shortened and len(batched_entries) >= 6:
+            print("⏭️  Skipping further frames due to shortened mode.")
+            break
+
+        print(f"\n🖼️ Processing image: {img_path.name}")
+        img_cv2 = cv2.imread(str(img_path))
+        h, w = img_cv2.shape[:2]
+        img_fn = os.path.splitext(os.path.basename(img_path))[0]
+        frame_id = int(img_fn.split('_')[0])
+
+        depth_img = None
+        for f in os.listdir(args.depth_folder):
+            if f.endswith(f"{frame_id}.npy"):
+                depth_img = np.load(os.path.join(args.depth_folder, f))  / 1000.
+                break
+            elif f.endswith(f"{frame_id}.png"):
+                depth_img = cv2.imread(os.path.join(args.depth_folder, f), cv2.IMREAD_UNCHANGED) / 1000.
+                if depth_img.shape != (h, w):
+                    raise ValueError("Depth and image shape mismatch")
+                break
+        if depth_img is None:
+            raise FileNotFoundError(f"No depth for {frame_id}")
+
+        det_out = detector(img_cv2)
+        det_instances = det_out['instances']
+        valid_idx = (det_instances.pred_classes == 0) & (det_instances.scores > 0.5)
+        pred_bboxes = det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
+        pred_scores = det_instances.scores[valid_idx].cpu().numpy()
+        img_rgb = img_cv2[..., ::-1]
+        vitposes_out = cpm.predict_pose(img_rgb, [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)])
+
+        best_hand = None
+        best_score = -np.inf
+
+        for vitposes in vitposes_out:
+            for hand_keyps, is_right in [(vitposes['keypoints'][-42:-21], 0), (vitposes['keypoints'][-21:], 1)]:
+                valid = hand_keyps[:, 2] > 0.7
+                if valid.sum() > 3:
+                    bbox = [hand_keyps[valid, 0].min(), hand_keyps[valid, 1].min(),
+                            hand_keyps[valid, 0].max(), hand_keyps[valid, 1].max()]
+                    score = np.mean(hand_keyps[valid, 2])
+                    if score > best_score:
+                        best_hand = {"bbox": bbox, "is_right": is_right, "score": score}
+                        best_score = score
+
+        if best_hand:
+            batched_entries.append({
+                "img_path": img_path,
+                "img_cv2": img_cv2,
+                "bbox": best_hand["bbox"],
+                "is_right": best_hand["is_right"],
+                "depth_img": depth_img,
+                "img_fn": img_fn,
+                "score": best_hand["score"]
+            })
+
+    if not batched_entries:
+        print("❌ No valid hands found.")
+        return
+
+    boxes = np.array([e["bbox"] for e in batched_entries])
+    rights = np.array([e["is_right"] for e in batched_entries])
+    imgs = np.array([e["img_cv2"] for e in batched_entries])
+
+    dataset = ViTDetDatasetBatch(hamer_model_cfg, imgs, rescale_factor=args.rescale_factor, boxes = boxes, right = rights)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+
+    # predict Hamer
+    for i, batch in enumerate(dataloader):
+        start_idx = i * args.batch_size
+        batch = recursive_to(batch, device)
+        with torch.no_grad():
+            with torch.amp.autocast('cuda', dtype=torch.float32):
+                out = model(batch)
+
+        batch_size = batch['img'].shape[0]
+        pred_cam = out['pred_cam']
+        pred_cam[:, 1] = (2 * batch['right'] - 1) * pred_cam[:, 1]
+        box_center = batch["box_center"].float()
+        box_size = batch["box_size"].float()
+        img_size = batch["img_size"].float()
+        scaled_focal_length = hamer_model_cfg.EXTRA.FOCAL_LENGTH / hamer_model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+        cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).cpu().numpy()
+
+        for n in range(batch_size):
+            entry = batched_entries[start_idx + n]
+            img_fn = entry["img_fn"]
+            depth_img = entry["depth_img"]
+            is_right = batch['right'][n].cpu().item()
+            verts = out['pred_vertices'][n].cpu().numpy()
+            verts[:, 0] = (2 * is_right - 1) * verts[:, 0]
+            cam_t = cam_t_full[n]
+            global_orient = out['pred_mano_params']['global_orient'][n].detach().contiguous().cpu().numpy()[0]
+            # if not is_right:
+            #     global_orient[0] *= -1
+
+            hand_key = f"{img_fn}"
+            all_hand_results[hand_key] = {
+                "pred_cam_t": cam_t.tolist(),
+                "global_orient": global_orient.tolist(),
+                "is_right": bool(is_right),
+                "scaled_focal_length": float(scaled_focal_length),
+                "score": float(entry["score"]),
+            }
+
+            all_verts.append(verts)
+            all_cam_t.append(cam_t)
+            all_right.append(is_right)
+
+            save_mesh = False
+            if save_mesh:
+                mesh = renderer.vertices_to_trimesh(verts, cam_t, LIGHT_BLUE, is_right=bool(is_right))
+                mesh.export(os.path.join(args.out_folder, f'{img_fn}.obj'))
+
+    # depth align and filtering and hand mask rendering
+    for i, datapoint in enumerate(batched_entries):
+        img_path = datapoint["img_path"]
+
+        print(f"\n🖼️ Processing image: {img_path.name}")
+        img_cv2 = cv2.imread(str(img_path))
+        h, w = img_cv2.shape[:2]
+        img_fn = os.path.splitext(os.path.basename(img_path))[0]
+        # Rendering full image, hand mask, overlay, and updating translation
+        v = all_verts[i]
+        if len(v) > 0:
+            # Render RGBA for all hands
+            cam_view = renderer.render_rgba_multiple(
+                all_verts[i][None,...], 
+                cam_t=all_cam_t[i][None,...],
+                render_res=img_size[n], 
+                is_right=[all_right[i]],
+                mesh_base_color=LIGHT_BLUE,
+                scene_bg_color=(1, 1, 1),
+                focal_length=scaled_focal_length
+            )
+            # Save hand mask as <img_fn>_handmask.png
+            hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
+
+            # Compute and update corrected translation using ICP
+            hamer_vertices = np.vstack(v)
+            # Use the last image's depth and intrinsics
+            depth_img = batched_entries[i]["depth_img"]
+            hand_pcd = extract_hand_point_cloud(hand_mask, depth_img, camera_intrinsics)
+            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_pcd, hand_mask, camera_intrinsics)
+            if hamer_aligned is None:
+                print(f"⏭️  Skipping frame {img_fn} due to poor depth quality.")
+                # Remove corresponding entry in all_hand_results if frame is skipped
+                if img_fn in all_hand_results:
+                    del all_hand_results[img_fn]
+                continue
+            else:
+                translation = hamer_aligned.mean(axis=0)
+                all_hand_results[img_fn]["pred_cam_t"] = translation.tolist()
+                
+                cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+
+
+    with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
+        json.dump(all_hand_results, f, indent=2)
+
+    print(f"⏱️  Total processing time: {time.time() - starting_time:.2f} seconds")
+    print("✅ Done")
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HaMeR demo code')
     parser.add_argument('--checkpoint', type=str, default=DEFAULT_CHECKPOINT, help='Path to pretrained model checkpoint')

@@ -159,7 +159,7 @@ def render_rgba_multiple(
     return color
 
 
-def replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intrinsics_path, ori_depth_folder, debug=False):
+def replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intrinsics, ori_depth_folder, debug=False):
     import json
     from multiprocessing import Pool
     os.makedirs(output_folder, exist_ok=True)
@@ -175,15 +175,8 @@ def replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intri
     with open(os.path.join(mesh_folder, "hand_pose_camera_info_smoothed.json"), "r") as f:
         hand_data = json.load(f)
 
-    # Load camera intrinsics
-    if os.path.exists(intrinsics_path):
-        with open(intrinsics_path, "r") as f:
-            camera_intrinsics = json.load(f)
-    else:
-        camera_intrinsics = None
-
     renderer = pyrender.OffscreenRenderer(viewport_width=width, viewport_height=height, point_size=1.0)
-    tasks = [(fname, mesh_folder, image_folder, depth_folder, output_folder, camera_intrinsics, hand_data, renderer, ori_depth_folder, debug) for fname in image_files]
+    tasks = [(fname, mesh_folder, image_folder, depth_folder, output_folder, intrinsics, hand_data, renderer, ori_depth_folder, debug) for fname in image_files]
 
     for args in tasks:
         process_frame(*args)
