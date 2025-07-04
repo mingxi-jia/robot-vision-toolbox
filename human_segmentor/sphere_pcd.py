@@ -74,7 +74,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, start_frame=
     
     cam_info = cam_info_dict
 
-    cam_views = [3]
+    cam_views = [1,2, 3]
     
             
     cam_intrinsics = cam_info[main_cam_name]['intrinsics']
@@ -106,7 +106,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, start_frame=
             all_pcds += pcd_o3d
         
         # Downsample and filter point cloud
-        max_point_num = 3000
+        max_point_num = 4812
         x_min, y_min, z_min, ws_size = 0.2, -0.2, -0.05, 0.4
         all_pcds = filter_point_cloud_by_workspace(all_pcds, x_min, x_min+ws_size, y_min, y_min+ws_size, z_min, z_min+ws_size)
         all_pcds = all_pcds.farthest_point_down_sample(num_samples=max_point_num)
