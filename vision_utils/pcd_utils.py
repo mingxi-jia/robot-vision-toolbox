@@ -233,11 +233,12 @@ def filter_point_cloud_by_workspace(pcd, x_min, x_max, y_min, y_max, z_min, z_ma
 
 if __name__ == "__main__":
 
-    data_path = "example_data/multiview_rgbd"
+    data_path = "/home/mingxi/data/realworld/red_on_yellow_hand_0703/episode_20250703_125142_958"
+    save_pcd_path = "/home/mingxi/data/realworld/debug"
     cam_views = [1, 2, 3]
 
     # load camera_info.yaml
-    with open(os.path.join(data_path, 'camera_info.yaml'), 'r') as f:
+    with open(os.path.join("configs", 'camera_info.yaml'), 'r') as f:
         cam_info = yaml.safe_load(f)
 
     frame_dict = dict()
@@ -268,10 +269,12 @@ if __name__ == "__main__":
     
 
     # multi-view reconstruction example
+    max_point_num = 4412
+    x_min, y_min, z_min, ws_size = 0.32, -0.25, -0.02, 0.5
     
-    all_pcds = o3d.geometry.PointCloud()
 
     for frame_i in range(num_frames):
+        all_pcds = o3d.geometry.PointCloud()
         for i in cam_views:
             cam_name = f'cam{i}'
 
@@ -286,10 +289,10 @@ if __name__ == "__main__":
             
 
             # coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.8, origin=[0, 0, 0])
+            # # o3d.visualization.draw_geometries([filter_point_cloud_by_workspace(pcd_o3d, x_min, x_min+ws_size, y_min, y_min+ws_size, z_min, z_min+ws_size), coordinate_frame])
             # o3d.visualization.draw_geometries([pcd_o3d, coordinate_frame])
 
-        max_point_num = 4412
-        x_min, y_min, z_min, ws_size = 0.2, -0.2, 0., 0.5
+        
         all_pcds = filter_point_cloud_by_workspace(all_pcds, x_min, x_min+ws_size, y_min, y_min+ws_size, z_min, z_min+ws_size)
         all_pcds = all_pcds.farthest_point_down_sample(num_samples=max_point_num)
 
@@ -297,5 +300,10 @@ if __name__ == "__main__":
         sphere = render_pcd_from_pose(exmaple_pose[None,...], fix_point_num=1024, model_type='sphere')[0]
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.8, origin=[0, 0, 0])
 
-        all_pcds += np2o3d(sphere[:, :3], sphere[:, 3:6])
-        o3d.visualization.draw_geometries([all_pcds, coordinate_frame])
+        # all_pcds += np2o3d(sphere[:, :3], sphere[:, 3:6])
+        # o3d.visualization.draw_geometries([all_pcds, coordinate_frame])
+
+        # Save the point cloud for this frame
+        os.makedirs(save_pcd_path, exist_ok=True)
+        file_name = os.path.join(save_pcd_path, f"{frame_i:04d}.ply")
+        o3d.io.write_point_cloud(os.path.join(save_pcd_path, file_name), all_pcds)
