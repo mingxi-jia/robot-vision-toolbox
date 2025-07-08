@@ -22,12 +22,7 @@ from hamer.utils.renderer import Renderer, cam_crop_to_full
 from hamer_detector.icp_conversion import extract_hand_point_cloud, compute_aligned_hamer_translation
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
-def detect_hand(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False, batch_mode=False):
-    if batch_mode:
-        hand_poss = detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
-    else:
-        hand_poss = detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
-    return hand_poss
+
 
 def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False):
     min_score = 0.75

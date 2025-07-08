@@ -337,7 +337,6 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
                         cv2.imwrite(vis_path, depth_colormap)
     
     convert_image_format(source_frames, ".png")
-    print("Finished segmenting data")
 
 # if __name__ == "__main__":
 #     ref_cam = 3

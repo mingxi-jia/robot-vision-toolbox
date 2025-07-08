@@ -74,7 +74,6 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     Returns:
         List[o3d.geometry.PointCloud]: List of point cloud objects for each frame.
     """
-
     _, episode_name = os.path.split(episode_path)
     if segment:
         image_path = os.path.join(output_path, episode_name)
@@ -92,9 +91,8 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     cam_extrinsics = cam_info_dict[main_cam_name]['extrinsics']
 
     # Load sphere hand pose and convert to world poses
-    sphere_cam_name = main_cam_name
-    sphere_pose_path = os.path.join(output_path, episode_name, 'hand_poses.npy')
-    hand_pose = np.load(sphere_pose_path, allow_pickle=True)[()]
+    pose_path = os.path.join(output_path, episode_name, 'hand_poses.npy')
+    hand_pose = np.load(pose_path, allow_pickle=True)[()]
     pose_dict = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
 
     frame_sequence = []
@@ -102,6 +100,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     # Workspace filtering parameters
 
     # Process each frame based on the pose dictionary keys
+    print(f"Generating point cloud sequence from episode: {episode_path} with {len(pose_dict.keys())} frames")
     for frame_idx in sorted(pose_dict.keys()):
         combined_pcd = o3d.geometry.PointCloud()
         
@@ -138,7 +137,6 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
             os.makedirs(save_dir)
         pcd_file = os.path.join(save_dir, f"{frame_idx}.ply")
         o3d.io.write_point_cloud(pcd_file, combined_pcd)
-        print(f"Saved PCD to {pcd_file}")
         
         frame_sequence.append(combined_pcd)
 

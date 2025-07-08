@@ -93,12 +93,20 @@ class RealToRobomimicConverter:
 
     def preprocess(self, hamer: Hamer):
         for episode_name in tqdm(self.episode_list, desc="Preprocessing episodes"):
+            done_indicator = os.path.join(self.process_path, episode_name, "DONE")
+            # done_indicator = os.path.join(self.process_path, episode_name, "hand_poses.npy")
+            if done_indicator:
+                print(f"Episode {episode_name} already processed. Skipping...")
+                continue
+            
             starting_time = time.time()
             episode_path = os.path.join(self.real_dataset_path, episode_name)
             for cam_id in [1, 2, 3]:
                 print(f"\n========= Processing Camera {cam_id} =========")
                 hamer.process(episode_path, cam_id)
+            # generate pcd with human in it
             generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True)
+            # generate pcd with rendered sphere
             generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False)
             print(f"Episode {episode_name} processed in {time.time() - starting_time:.2f} seconds.")
 
@@ -118,11 +126,11 @@ class RealToRobomimicConverter:
 
         point_num = pcd_np.shape[0]
         assert point_num > 1024, "Too few points in the point cloud after filtering."
-        if pcd_np.shape[0] > self.fix_point_num:
+        if pcd_np.shape[0] >= self.fix_point_num:
             #farthest point down sample to self.fix_point_num
             pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
         else:
-            extra_choice = np.random.choice(pcd.shape[0], point_num-pcd.shape[0], replace=True)
+            extra_choice = np.random.choice(point_num, self.fix_point_num-pcd.shape[0], replace=True)
             pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
 
         pcd_np = o3d2np(pcd_o3d)
@@ -295,7 +303,8 @@ class RealToRobomimicConverter:
         f_out = h5py.File(self.robomimic_dataset_path, "w")
         data_grp = f_out.create_group("data")
 
-        for episode_idx, episode_name in tqdm(enumerate(self.episode_list), desc="Converting episodes"):
+        bar = tqdm(total=len(self.episode_list), desc="Converting episodes")
+        for episode_idx, episode_name in enumerate(self.episode_list):
             traj = self.load_trajectory(episode_name)
 
             ep = f"demo_{episode_idx}"
@@ -308,10 +317,13 @@ class RealToRobomimicConverter:
             for k in traj["obs"].keys():
                 data = np.array(traj["obs"][k])
                 assert data.dtype != np.dtype('O'), "Data type should not be object, but got {}".format(data.dtype)
-                ep_data_grp.create_dataset("obs/{}".format(k), data=np.array(traj["obs"][k]), compression="gzip")
+                ep_data_grp.create_dataset("obs/{}".format(k), data=data, compression="gzip")
 
-            ep_data_grp.attrs["num_samples"] = traj["actions"].shape[0] # 
-            print("ep {}: wrote {} transitions to group {}".format(episode_idx, ep_data_grp.attrs["num_samples"], ep))
+            ep_data_grp.attrs["num_samples"] = traj["actions"].shape[0]
+            tqdm.write("ep {}: wrote {} transitions to group {}".format(
+            episode_idx, ep_data_grp.attrs["num_samples"], ep))
+            bar.update(1)
+        bar.close()
 
 if __name__ == "__main__":
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")

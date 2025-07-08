@@ -2,7 +2,7 @@ import os
 import argparse
 import time
 from hamer_detector.video_preprocessor import subsample_video
-from hamer_detector.demo import detect_hand 
+from hamer_detector.detector import detect_hand 
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 import sys
 sys.path.append('./')
