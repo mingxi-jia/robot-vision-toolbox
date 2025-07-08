@@ -38,7 +38,9 @@ from vision_utils.pcd_utils import convert_RGBD_to_open3d, o3d2np
 from dataset_utils.hand_preprocessor import HandPreprocessor as Hamer
 from human_segmentor.sphere_pcd import generate_pcd_sequence
 
-from example_data.pcd_utils import get_extrinsics_matrix
+from vision_utils.pcd_utils import get_extrinsics_matrix, pcd_to_voxel, render_pcd_from_pose
+
+from configs.workspace import WORKSPACE, MAX_POINT_NUM, VOXEL_SIZE
 
 def load_camera_info_dict(info_path: str):
     assert info_path.endswith(".yaml"), "Info file should be a yaml file"
@@ -49,10 +51,10 @@ def load_camera_info_dict(info_path: str):
         info_dict[cam_name]['extrinsics'] = get_extrinsics_matrix(cam_info['t'], cam_info['q'])
     return info_dict
 
-def convert_state_to_action(states: list):
-    action = copy.deepcopy(states[1:])
-    action.append(states[-1])
-    action = np.stack(action)
+def convert_state_to_action(ee_pose: np.ndarray):
+    # Instead of converting to lists and stacking, we can directly use NumPy slicing and concatenation.
+    # This appends the last row to the sliced array from index 1 onward.
+    action = np.concatenate((ee_pose[1:], ee_pose[-1:]), axis=0)
     xyz = action[:, :3]  # Extract xyz positions
     quat = action[:, 3:7]  # Extract quaternion orientations
     gripper = action[:, 7:]  # Extract gripper states (if any)
@@ -63,7 +65,8 @@ def convert_state_to_action(states: list):
 
 class RealToRobomimicConverter:
     def __init__(self, real_dataset_path: str, output_robomimic_path: str):
-        cam_list = [f for f in os.listdir(os.path.join(real_dataset_path, "episode_0")) if f.startswith("cam")]
+        self.episode_list = [f for f in os.listdir(os.path.join(real_dataset_path)) if f.startswith("episode")]
+        cam_list = [f for f in os.listdir(os.path.join(real_dataset_path, self.episode_list[0])) if f.startswith("cam")]
         num_cams = len(cam_list)
         num_episodes = len([f for f in os.listdir(real_dataset_path) if f.startswith("episode_")])
 
@@ -81,56 +84,24 @@ class RealToRobomimicConverter:
         self.cam_list = cam_list
         self.low_dim_list = ['robot0_eef_pos', 'robot0_eef_quat']
         self.num_episodes = num_episodes
-        self.fix_point_num = 4412
-        self.workspace = np.array([[0.2, 0.6], 
-                                   [-0.2, 0.2], 
-                                   [0.0, 0.4]])
+        self.fix_point_num = MAX_POINT_NUM
+        self.workspace = WORKSPACE
 
 
         print(f"Extracting actions from real dataset using HAMER...")
         self.preprocess(self.hamer)
 
     def preprocess(self, hamer: Hamer):
-        for episode_idx in tqdm(range(self.num_episodes), desc="Preprocessing episodes"):
+        for episode_name in tqdm(self.episode_list, desc="Preprocessing episodes"):
             starting_time = time.time()
-            episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
+            episode_path = os.path.join(self.real_dataset_path, episode_name)
             for cam_id in [1, 2, 3]:
                 print(f"\n========= Processing Camera {cam_id} =========")
                 hamer.process(episode_path, cam_id)
-            generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, start_frame=0, sphere_cam=3)
-            print(f"Episode {episode_idx} processed in {time.time() - starting_time:.2f} seconds.")
-            # self.extract_actions(episode_idx)
-            # self.extract_pcds(episode_idx)
+            generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True)
+            generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False)
+            print(f"Episode {episode_name} processed in {time.time() - starting_time:.2f} seconds.")
 
-    def extract_actions(self, episode_idx):
-        episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
-        traj_length = self.get_traj_length(episode_idx)
-
-        states = []
-        rewards = np.zeros(traj_length)
-        for frame_idx in range(traj_length):
-            rgb_path = os.path.join(episode_path, self.main_cam, "rgb", f"{frame_idx}.png")
-            depth_path = os.path.join(episode_path, self.main_cam, "depth", f"{frame_idx}.npy")
-
-            rgb = np.array(Image.open(rgb_path))
-            depth = np.load(depth_path)
-            
-            hand_pose = self.hamer.get_hand_pose(rgb, depth) #TODO(ivy)
-            assert hand_pose.shape == (7,), f"Hand pose shape is {hand_pose.shape} but should be (7,), aka [x, y, z, qx, qy, qz, qw]"
-
-            states.append(hand_pose)
-
-        # shift states by 1 time step
-        actions = convert_state_to_action(states)
-        states = np.stack(states)
-        
-        rewards[-1] = 1
-        dones = rewards.copy().astype(bool)
-
-        np.save(os.path.join(episode_path, "states.npy"), states)
-        np.save(os.path.join(episode_path, "actions.npy"), actions)
-        np.save(os.path.join(episode_path, "rewards.npy"), rewards)
-        np.save(os.path.join(episode_path, "dones.npy"), dones)
 
     def process_raw_pcd(self, pcd: np.ndarray):
         pcd_np = pcd[np.where((pcd[:, 0] > self.workspace[0, 0]) & (pcd[:, 0] < self.workspace[0, 1]) &
@@ -145,80 +116,105 @@ class RealToRobomimicConverter:
         pcd_o3d.points = o3d.utility.Vector3dVector(pcd_np[:, :3])
         pcd_o3d.colors = o3d.utility.Vector3dVector(pcd_np[:, 3:])
 
-        #farthest point down sample to self.fix_point_num
-        pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
+        point_num = pcd_np.shape[0]
+        assert point_num > 1024, "Too few points in the point cloud after filtering."
+        if pcd_np.shape[0] > self.fix_point_num:
+            #farthest point down sample to self.fix_point_num
+            pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
+        else:
+            extra_choice = np.random.choice(pcd.shape[0], point_num-pcd.shape[0], replace=True)
+            pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
 
         pcd_np = o3d2np(pcd_o3d)
         return pcd_np, pcd_o3d
 
-    def extract_pcds(self, episode_idx):
-        episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
-        traj_length = self.get_traj_length(episode_idx)
-
-        os.makedirs(os.path.join(episode_path, "pcds"), exist_ok=True)
-
-        for frame_idx in range(traj_length):
-            step_pcd = []
-            for cam in self.cam_list:
-                rgb_path = os.path.join(episode_path, cam, "rgb", f"{frame_idx}.png")
-                depth_path = os.path.join(episode_path, cam, "depth", f"{frame_idx}.npy")
-
-                rgb = np.array(Image.open(rgb_path))
-                depth = np.load(depth_path)
-
-                pcd_np, _ = convert_RGBD_to_open3d(rgb, depth, self.info_dict[cam]['intrinsics'], self.info_dict[cam]['extrinsics'])
-                step_pcd.append(pcd_np)
-
-            step_pcd = np.concatenate(step_pcd, axis=0)
-            _, pcd_o3d = self.process_raw_pcd(step_pcd)
-            o3d.io.write_point_cloud(os.path.join(episode_path, "pcds", f"{frame_idx}.ply"), pcd_o3d)
-        
-
-    def get_traj_length(self, episode_idx: int):
-        episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
+    def get_traj_length(self, episode_name: str):
+        episode_path = os.path.join(self.real_dataset_path, episode_name)
         traj_list = [f for f in os.listdir(os.path.join(episode_path, self.main_cam, "rgb")) if f.endswith(".png")]
         # sort in terms of time based on file name "sec_nanosec.png"
         traj_list.sort(key=lambda x: int(x.split(".")[0].split("_")[0]))
         return len(traj_list)
 
-    def load_trajectory(self, episode_idx: int):
-        episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
-        traj_length = self.get_traj_length(episode_idx)
+    def get_obs_from_episode(self, episode_path: int, cam: str, frame_idx: str):
+        rgb_path = os.path.join(episode_path, cam, "rgb", f"{frame_idx}.png")
+        depth_path = os.path.join(episode_path, cam, "depth", f"{frame_idx}.npy")
+
+        rgb = np.array(Image.open(rgb_path))
+        depth = np.load(depth_path)
+
+        return rgb, depth
+    
+    def get_pcd_from_episode(self, process_path, frame_idx: str):
+        pcd_path = os.path.join(process_path, "pcd", f"{frame_idx}.ply")
+        pcd_no_robot_path = os.path.join(process_path, "pcd_no_hand", f"{frame_idx}.ply")
+
+        pcd = o3d.io.read_point_cloud(pcd_path)
+        pcd_no_robot = o3d.io.read_point_cloud(pcd_no_robot_path)
+
+        return o3d2np(pcd), o3d2np(pcd_no_robot)
+    
+    def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pos: np.ndarray):
+        geco = render_pcd_from_pose(ee_pos, 1024, 'sphere')
+        pcd_render = np.concatenate([pcd_no_robot, geco], axis=0)
+        np_voxels_render = pcd_to_voxel(pcd_render[None,...])[0]
+        return np_voxels_render
+    
+    def load_trajectory(self, episode_name: str):
+        episode_path = os.path.join(self.real_dataset_path, episode_name)
+        process_episode_path = os.path.join(self.process_path, episode_name)
+        traj_length = self.get_traj_length(episode_name)
+        ee_poss: dict = np.load(os.path.join(process_episode_path, "hand_poses.npy"), allow_pickle=True)[()]
         
-        rgb_dict = {cam: [] for cam in self.cam_list}
-        depth_dict = {cam: [] for cam in self.cam_list}
-        pcd_seq = []
-        for frame_idx in range(traj_length):
-            pcds = []
+        rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
+        depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
+        pcd_seq, voxel_seq, voxel_render_seq, ee_pos_seq = [], [], [], []
+
+        for frame_idx, pose in ee_poss.items():
+            pcd, pcd_no_robot = self.get_pcd_from_episode(process_episode_path, frame_idx)
             for cam in self.cam_list:
-                rgb_path = os.path.join(episode_path, cam, "rgb", f"{frame_idx}.png")
-                depth_path = os.path.join(episode_path, cam, "depth", f"{frame_idx}.npy")
-                pcd_path = os.path.join(episode_path, cam, "pcd", f"{frame_idx}.ply")
+                rgb, depth = self.get_obs_from_episode(episode_path, cam, frame_idx)
 
-                rgb = np.array(Image.open(rgb_path))
-                depth = np.load(depth_path)
-                pcd = o3d.io.read_point_cloud(pcd_path)
+                rgb_dict[f'{cam}_image'].append(rgb)
+                depth_dict[f'{cam}_depth'].append(depth)
 
-                rgb_dict[cam].append(rgb)
-                depth_dict[cam].append(depth)
-                pcds.append(pcd)
+            np_pcd, _ = self.process_raw_pcd(pcd)
+            np_pcd_no_robot, _ = self.process_raw_pcd(pcd_no_robot)
+            np_voxels = pcd_to_voxel(np_pcd[None,...])[0]
+            np_voxels_render = self.get_render_pcd(np_pcd_no_robot, pose)
 
-            pcd_seq.append(np.concatenate(pcds, axis=0))
+            pcd_seq.append(np_pcd)
+            voxel_seq.append(np_voxels)
+            voxel_render_seq.append(np_voxels_render)
+            ee_pos_seq.append(pose)
 
+        ee_pos_seq = np.stack(ee_pos_seq)
+        gripper_state_seq = np.zeros((len(ee_pos_seq), 1), dtype=np.float32)  #TODO(mingxi)
+        actions = convert_state_to_action(np.concatenate((ee_pos_seq, gripper_state_seq), axis=-1))  # Convert ee_pos to actions
+        
+        rewards = np.zeros((traj_length, 1), dtype=np.float32)
+        rewards[-1] = 1.0
+        dones = rewards.copy().astype(bool)
 
-        actions = np.load(os.path.join(episode_path, "actions.npy"))
-        states = np.load(os.path.join(episode_path, "states.npy"))
-        rewards = np.load(os.path.join(episode_path, "rewards.npy"))
-        dones = np.load(os.path.join(episode_path, "dones.npy"))
+        state_dict = dict()
+        state_dict['robot0_eef_pos'] = ee_pos_seq[:, :3].copy()  # Assuming first 3 are position
+        state_dict['robot0_eef_quat'] = ee_pos_seq[:, 3:7].copy()
+        state_dict['robot0_gripper_qpos'] = gripper_state_seq.copy()  # Assuming gripper state is the last element
 
-        obs = {**rgb_dict, **depth_dict, 'pcd': np.stack(pcd_seq)}
+        voxel_dict = dict()
+        voxel_dict['voxel'] = np.stack(voxel_seq).astype(np.uint8) 
+        voxel_dict['voxel_render'] = np.stack(voxel_render_seq).astype(np.uint8)
+
+        obss = {**rgb_dict, **depth_dict, **state_dict, **voxel_dict, 'pcd': np.stack(pcd_seq)}
+        # merge obs and rgb_dict
 
         trajectory = {
-            'obs': obs,
+            'obs': obss,
+            'states': ee_pos_seq,
             'actions': actions,
             'rewards': rewards,
             'dones': dones
         }
+
 
         return trajectory
 
@@ -299,8 +295,8 @@ class RealToRobomimicConverter:
         f_out = h5py.File(self.robomimic_dataset_path, "w")
         data_grp = f_out.create_group("data")
 
-        for episode_idx in tqdm(range(self.num_episodes), desc="Converting episodes"):
-            traj = self.load_trajectory_dummy(episode_idx)
+        for episode_idx, episode_name in tqdm(enumerate(self.episode_list), desc="Converting episodes"):
+            traj = self.load_trajectory(episode_name)
 
             ep = f"demo_{episode_idx}"
 

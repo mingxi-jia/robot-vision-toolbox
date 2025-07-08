@@ -14,10 +14,10 @@ import numpy as np
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
 # Folder containing your sequence of .ply files
-INPUT_FOLDER = "/home/mingxi/data/realworld/debug"
+INPUT_FOLDER = "/home/mingxi/data/realworld/test/output/episode_0/pcd_no_hand"
 
 # Path for the output video file
-OUTPUT_VIDEO_PATH = "/home/mingxi/data/realworld/a.mp4"
+OUTPUT_VIDEO_PATH = "/home/mingxi/data/realworld/b.mp4"
 
 # Frames per second for the output video
 VIDEO_FPS = 15

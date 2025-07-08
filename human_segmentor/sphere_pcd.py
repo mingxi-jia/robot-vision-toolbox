@@ -8,8 +8,8 @@ from scipy.spatial.transform import Rotation as R
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 sys.path.append('./')
-from example_data.pcd_utils import *
-    
+from vision_utils.pcd_utils import *
+from configs.workspace import WORKSPACE, MAX_POINT_NUM
 
 
 def visualize_pcd_loop(pcd_sequence):
@@ -46,85 +46,101 @@ def uvz_to_world(u, v, z, intrinsics, extrinsics):
     return P_world[:3]
 
 
-def convert_hamer_pose_to_extrinsic(hand_data, intrinsics, extrinsics):
-    pose_dict = {}
+def convert_hamer_pose_to_extrinsic(hand_data, extrinsics):
+    global_pose = {}
+    for frame_name, pose in hand_data.items():
+        xyz_wrt_cam, quat_wrt_cam = pose[:3], pose[3:7]
+        hand_pos_wrt_cam = np.eye(4)
+        hand_pos_wrt_cam[:3, :3] = R.from_quat(quat_wrt_cam).as_matrix()
+        hand_pos_wrt_cam[:3, 3] = xyz_wrt_cam
+        hand_pos_wrt_world = extrinsics @ hand_pos_wrt_cam
 
-    for frame_idx, key in enumerate(sorted(hand_data.keys())):
-        sphere_center = np.array(hand_data[key]["uvz_handmask"])
-        global_orient = np.array(hand_data[key]["global_orient_quat"])
-        u,v,z = sphere_center
-        frame_name = sorted(hand_data.keys())[frame_idx]
-        trans_pose = uvz_to_world(u,v, z, intrinsics, extrinsics)
-        quat = global_orient
-        example_pose = np.hstack([trans_pose, quat])
-        pose_dict[frame_name] = example_pose.tolist()
-        # Removed cam_frame.transform(extrinsics)
-    # Save to json
-    # output_path = os.path.join(data_path, f'pose_dict.json')
-    # with open(output_path, 'w') as f:
-    #     json.dump(pose_dict, f, indent=4)
-    # print(f"Saved pose dict to {output_path}")
-    return pose_dict
+        xyz_wrt_world, quat_wrt_world = hand_pos_wrt_world[:3, 3], R.from_matrix(hand_pos_wrt_world[:3, :3]).as_quat()
+        global_pose[frame_name] = np.concatenate([xyz_wrt_world, quat_wrt_world])
+    return global_pose
         
         
-def generate_pcd_sequence(episode_path, output_path, cam_info_dict, start_frame=0, sphere_cam = 3):
+def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True):
+    """
+    Generate a sequence of point clouds from RGB-D images and sphere poses.
+    
+    Parameters:
+        episode_path (str): Path to the episode directory.
+        output_path (str): Path where output point clouds and intermediate files are saved.
+        cam_info_dict (dict): Dictionary containing camera intrinsics and extrinsics.
+        start_frame (int, optional): Frame index to start from.
+        sphere_cam (int, optional): Camera ID used for sphere pose.
+    
+    Returns:
+        List[o3d.geometry.PointCloud]: List of point cloud objects for each frame.
+    """
+
+    _, episode_name = os.path.split(episode_path)
+    if segment:
+        image_path = os.path.join(output_path, episode_name)
+        rgb_dir, depth_dir, pcd_dir = 'segmented_rgb', 'segmented_depth', 'pcd_no_hand'
+    else:
+        image_path = episode_path
+        rgb_dir, depth_dir, pcd_dir = 'rgb', 'depth', 'pcd'
+
+    # Determine camera names
     main_cam_name = f'cam{sphere_cam}'
-    data_path, episode_name = os.path.split(episode_path)
+    cam_views = [1, 2, 3]
 
-    
-    cam_info = cam_info_dict
+    # Get intrinsics and extrinsics for the main camera
+    cam_intrinsics = cam_info_dict[main_cam_name]['intrinsics']
+    cam_extrinsics = cam_info_dict[main_cam_name]['extrinsics']
 
-    cam_views = [1,2, 3]
-    
-            
-    cam_intrinsics = cam_info[main_cam_name]['intrinsics']
-    cam_extrinsics = cam_info[main_cam_name]['extrinsics']
-
-    
-    sphere_cam_name = f'cam{sphere_cam}'
-    with open(os.path.join(output_path, episode_name, sphere_cam_name, 'sphere_pose.json'), 'r') as f:
-        hand_pose = json.load(f)
-    pose_dict = convert_hamer_pose_to_extrinsic(hand_pose, cam_intrinsics, cam_extrinsics)
+    # Load sphere hand pose and convert to world poses
+    sphere_cam_name = main_cam_name
+    sphere_pose_path = os.path.join(output_path, episode_name, 'hand_poses.npy')
+    hand_pose = np.load(sphere_pose_path, allow_pickle=True)[()]
+    pose_dict = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
 
     frame_sequence = []
-    
-    for i, frame_idx in enumerate(sorted(pose_dict.keys())):
-        all_pcds = o3d.geometry.PointCloud()
-        for i in cam_views:
-            cam_name = f'cam{i}'
+    max_point_num = MAX_POINT_NUM
+    # Workspace filtering parameters
 
-            # simulate different RGB and depth images for each view
-            rgb_path = os.path.join(output_path, episode_name, cam_name, 'segment_out', 'segmented_rgb', f'{frame_idx}_segmented.png')
-            depth_path = os.path.join(output_path, episode_name, cam_name, 'segment_out','segmented_depth', f'{frame_idx}_segmented.npy')
-            if not os.path.exists(rgb_path) or not os.path.exists(depth_path):
-                continue
-            # Load RGB and depth images
+    # Process each frame based on the pose dictionary keys
+    for frame_idx in sorted(pose_dict.keys()):
+        combined_pcd = o3d.geometry.PointCloud()
+        
+        # Loop over each camera view
+        for view in cam_views:
+            cam_name = f'cam{view}'
+            rgb_path = os.path.join(image_path, cam_name, rgb_dir, f'{frame_idx}.png')
+            depth_path = os.path.join(image_path, cam_name, depth_dir, f'{frame_idx}.npy')
+            
+            assert os.path.exists(rgb_path) and os.path.exists(depth_path)
+
+            # Load and convert images to a point cloud
             rgb = np.asarray(Image.open(rgb_path).convert('RGB'))
-            depth = np.load(depth_path) / 1000.
-            # Convert RGB and depth to Open3D point cloud
-            pcd_np, pcd_o3d = convert_RGBD_to_open3d(rgb, depth, cam_info[cam_name]['intrinsics'], cam_info[cam_name]['extrinsics'])
-            all_pcds += pcd_o3d
+            depth = np.load(depth_path) / 1000.0
+            _, pcd_o3d = convert_RGBD_to_open3d(rgb, depth, cam_info_dict[cam_name]['intrinsics'], cam_info_dict[cam_name]['extrinsics'])
+            combined_pcd += pcd_o3d
         
-        # Downsample and filter point cloud
-        max_point_num = 4812
-        x_min, y_min, z_min, ws_size = 0.2, -0.2, -0.05, 0.4
-        all_pcds = filter_point_cloud_by_workspace(all_pcds, x_min, x_min+ws_size, y_min, y_min+ws_size, z_min, z_min+ws_size)
-        all_pcds = all_pcds.farthest_point_down_sample(num_samples=max_point_num)
+        # Filter and downsample the point cloud
+        combined_pcd = filter_point_cloud_by_workspace(
+            combined_pcd,
+            WORKSPACE
+        )
+        combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=max_point_num)
 
-        # use the pose from the dictionary to render the sphere
-        example_pose = np.array(pose_dict[frame_idx])
-        sphere = render_pcd_from_pose(example_pose[None,...], fix_point_num=1024, model_type='sphere')[0]
-        all_pcds += np2o3d(sphere[:, :3], sphere[:, 3:6])
+        # Render the sphere using the respective pose
+        pose = np.array(pose_dict[frame_idx])
+        sphere, = render_pcd_from_pose(pose[None, ...], fix_point_num=1024, model_type='sphere')
+        sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
+        combined_pcd += sphere_pcd
 
-       
-        # Save the point cloud for this frame
-        pcd_path = os.path.join(output_path, episode_name, 'pcd')
-        if not os.path.exists(pcd_path):
-            os.makedirs(pcd_path)
-        o3d.io.write_point_cloud(os.path.join(pcd_path, f"{frame_idx}.ply"), all_pcds)
-        print(f"Saved PCD to {pcd_path}")
+        # Save the point cloud to file
+        save_dir = os.path.join(output_path, episode_name, pcd_dir)
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        pcd_file = os.path.join(save_dir, f"{frame_idx}.ply")
+        o3d.io.write_point_cloud(pcd_file, combined_pcd)
+        print(f"Saved PCD to {pcd_file}")
         
-        frame_sequence.append(all_pcds)
+        frame_sequence.append(combined_pcd)
 
     return frame_sequence
 

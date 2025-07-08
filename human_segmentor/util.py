@@ -100,7 +100,7 @@ def convert_images_to_video(image_folder: str, framerate: int = 24):
     base_framerate = framerate
     image_files = sorted([
         f for f in os.listdir(image_folder)
-        if f.endswith('_final.png') or f.endswith('_segmented.png') or f.endswith('_all.png')
+        if f.endswith('_final.png') or f.endswith('.png') or f.endswith('_all.png')
     ])
 
     if not image_files:

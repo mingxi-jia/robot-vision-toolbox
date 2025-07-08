@@ -8,6 +8,7 @@ import yaml
 from PIL import Image
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
+from configs.workspace import WORKSPACE, VOXEL_RESOLUTION, WS_SIZE, VOXEL_SIZE
 
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 gripper_asset = o3d.io.read_point_cloud(os.path.join(current_file_path, "./gripper.ply"))
@@ -197,7 +198,7 @@ def o3d2np(pcd_o3d, num_samples=4412):
 
     return pcd_np
 
-def filter_point_cloud_by_workspace(pcd, x_min, x_max, y_min, y_max, z_min, z_max):
+def filter_point_cloud_by_workspace(pcd, workspace_limits):
     """
     Filters an Open3D point cloud based on given x and y workspace limits.
 
@@ -213,6 +214,8 @@ def filter_point_cloud_by_workspace(pcd, x_min, x_max, y_min, y_max, z_min, z_ma
     Returns:
         open3d.geometry.PointCloud: The filtered point cloud.
     """
+    x_min, x_max, y_min, y_max, z_min, z_max = workspace_limits[0,0], workspace_limits[0,1], \
+        workspace_limits[1,0], workspace_limits[1,1], workspace_limits[2,0], workspace_limits[2,1]
     points = np.asarray(pcd.points)
 
     # Create a boolean mask for points within the specified x and y ranges
@@ -307,3 +310,45 @@ if __name__ == "__main__":
         os.makedirs(save_pcd_path, exist_ok=True)
         file_name = os.path.join(save_pcd_path, f"{frame_i:04d}.ply")
         o3d.io.write_point_cloud(os.path.join(save_pcd_path, file_name), all_pcds)
+
+def pcd_to_voxel(pcds: np.ndarray, gripper_crop: float = None):
+    assert pcds.shape[2] == 6, "PCD CONVERSION ERROR: pcd shape is incorrect"
+    assert (pcds[0, :, 3:6] <= 1.).all(), "PCD CONVERSION ERROR: pcd color is incorrect"
+
+    # Define voxel bounds
+    if gripper_crop is None:
+        voxel_bound = WORKSPACE.T
+    else:
+        voxel_bound = np.array([
+            [-gripper_crop, gripper_crop],
+            [-gripper_crop, gripper_crop],
+            [-gripper_crop, gripper_crop]
+        ]).T
+
+    # Precompute voxel grid dimensions
+    grid_min = voxel_bound[0]
+    grid_max = voxel_bound[1]
+    grid_size = ((grid_max - grid_min) / VOXEL_SIZE).astype(int)
+    grid_size = np.clip(grid_size, 0, VOXEL_RESOLUTION)
+
+    batch_voxels= []
+    for i, pcd in enumerate(pcds):
+        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud_within_bounds(np2o3d(pcd[:,:3], pcd[:,3:]), voxel_size=VOXEL_SIZE, min_bound=voxel_bound[0], max_bound=voxel_bound[1])
+        voxels = voxel_grid.get_voxels()  # returns list of voxels
+        if len(voxels) == 0:
+            np_voxels = np.zeros([4, VOXEL_RESOLUTION, VOXEL_RESOLUTION, VOXEL_RESOLUTION], dtype=np.uint8)
+        else:
+            indices = np.stack(list(vx.grid_index for vx in voxels))
+            colors = np.stack(list(vx.color for vx in voxels))
+
+            mask = (indices > 0) * (indices < VOXEL_RESOLUTION)
+            indices = indices[mask.all(axis=1)]
+            colors = colors[mask.all(axis=1)]
+
+            np_voxels = np.zeros([4, VOXEL_RESOLUTION, VOXEL_RESOLUTION, VOXEL_RESOLUTION], dtype=np.uint8)
+            np_voxels[0, indices[:, 0], indices[:, 1], indices[:, 2]] = 1
+            np_voxels[1:, indices[:, 0], indices[:, 1], indices[:, 2]] = colors.T * 255
+        
+        batch_voxels.append(np_voxels)
+    batch_voxels = np.stack(batch_voxels)
+    return batch_voxels

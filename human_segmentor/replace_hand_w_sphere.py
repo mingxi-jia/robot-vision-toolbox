@@ -163,7 +163,7 @@ def replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intri
     import json
     from multiprocessing import Pool
     os.makedirs(output_folder, exist_ok=True)
-    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith("_segmented.png")])
+    image_files = sorted([f for f in os.listdir(image_folder) if f.endswith(".png")])
     first_image_path = os.path.join(image_folder, image_files[0])
     print(first_image_path)
     image = cv2.imread(first_image_path)
@@ -176,10 +176,10 @@ def replace_sphere(mesh_folder, image_folder, depth_folder, output_folder, intri
         hand_data = json.load(f)
 
     renderer = pyrender.OffscreenRenderer(viewport_width=width, viewport_height=height, point_size=1.0)
-    tasks = [(fname, mesh_folder, image_folder, depth_folder, output_folder, intrinsics, hand_data, renderer, ori_depth_folder, debug) for fname in image_files]
 
-    for args in tasks:
-        process_frame(*args)
+    for fname in image_files:
+        sphere_pose_dict = process_frame(fname, mesh_folder, image_folder, depth_folder, output_folder, intrinsics, hand_data, renderer, ori_depth_folder, debug)
+
     renderer.delete()
 
 
@@ -270,7 +270,7 @@ def process_frame(fname, mesh_folder, image_folder, depth_folder, output_folder,
 
     # Add the full sphere geometry to update the depth map
     if camera_intrinsics is not None and depth_folder is not None:
-        depth_path = os.path.join(depth_folder, f"{int(frame_id):06d}_segmented.npy")
+        depth_path = os.path.join(depth_folder, f"{int(frame_id):06d}.npy")
         if os.path.exists(depth_path):
             depth = np.load(depth_path)
             H, W = depth.shape
@@ -312,7 +312,8 @@ def process_frame(fname, mesh_folder, image_folder, depth_folder, output_folder,
         
     with open(pose_output_path, 'w') as f:
         json.dump(sphere_pose_dict, f, indent=4)
-
+    
+    return sphere_pose_dict
 
 if __name__ == "__main__":
 

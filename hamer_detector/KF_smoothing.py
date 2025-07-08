@@ -544,7 +544,7 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
     # Prepare raw_cam_ts_np and raw_quats for plotting
     raw_cam_ts_np = np.array(raw_cam_ts)
     raw_quats = R.from_matrix(raw_rot_mats).as_quat()
-    original_quats = R.from_matrix(rot_mats).as_quat()
+    quats = R.from_matrix(rot_mats).as_quat()
     smoothed_quats = R.from_matrix(smoothed_rot_mats).as_quat()
 
     # Compute angular velocity (frame-to-frame quaternion difference)
@@ -642,16 +642,25 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
     # Save updated JSON: only filtered and smoothed frames
     smoothed_data = {}
+    hand_poss = {}
     for i, fid in enumerate(frame_ids):
         if fid in data:
             smoothed_data[fid] = data[fid]
             # Only smooth translation, keep orientation as original (do not smooth quaternion/orientation)
-            smoothed_data[fid]["pred_cam_t"] = smoothed_cam_ts[i].tolist()
-            smoothed_data[fid]["global_orient"] = [rot_mats[i].tolist()]  # Use original orientation (not smoothed)
+            hand_translation = smoothed_cam_ts[i]
+            hand_rotation = rot_mats[i]
+
+            smoothed_data[fid]["pred_cam_t"] = hand_translation.tolist()
+            smoothed_data[fid]["global_orient"] = [hand_rotation.tolist()]  # Use original orientation (not smoothed)
             
+            hand_pos = np.concatenate([hand_translation, quats[i]])
+            hand_poss[fid] = hand_pos
+
     output_path = os.path.splitext(json_path)[0] + "_smoothed.json"
     with open(output_path, "w") as f:
         json.dump(smoothed_data, f, indent=2)
+
+    return hand_poss
 
 # === Example use ===
 if __name__ == "__main__":

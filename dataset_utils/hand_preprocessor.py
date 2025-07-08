@@ -115,11 +115,11 @@ class HandPreprocessor:
             file_type=["*.jpg", "*.png"],
         )
         camera_intrinsics = self.camera_info[f'cam{cam_num}']
-        detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.detectron, self.renderer, camera_intrinsics, shortened, batch_mode=True)
+        hand_poss = detect_hand(hamer_args, self.model, self.model_cfg, self.cpm, self.detectron, self.renderer, camera_intrinsics, shortened, batch_mode=True)
         if cam_num == 3:
-            smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
+            hand_poss = smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
             convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
-        print("Step 2: HaMeR hand detection completed.")
+        return hand_poss
         
     def segment_human(self, cam_num):
         """Segment the human from the background using SAM."""
@@ -131,36 +131,17 @@ class HandPreprocessor:
         convert_images_to_video(segmented_rgb_dir, framerate=30 // self.SAMPLE_RATE)
         print("Step 3: Human segmentation completed.")  
     
-    def render_spheres(self, cam_num):
+    def render_spheres(self, hand_poss, cam_num):
         """Render spheres in place of hands."""
         segmented_rgb_dir = os.path.join(self.segmentation_out_dir, "segmented_rgb")
         segmented_depth_dir = os.path.join(self.segmentation_out_dir, "segmented_depth")
-        replace_sphere(self.hamer_out_dir, segmented_rgb_dir, segmented_depth_dir,
+        sphere_poses = replace_sphere(hand_poss, self.hamer_out_dir, segmented_rgb_dir, segmented_depth_dir,
                        self.sphere_out_dir, self.camera_info[f'cam{cam_num}'],
                        ori_depth_folder=self.depth_img_dir, debug=self.debug)
         convert_images_to_video(self.sphere_out_dir, framerate=30 // self.SAMPLE_RATE)
-        print("Step 4: Sphere rendering completed.")    
+        return sphere_poses
     
-    
-    def process(self, episode_path, cam_num):
-        data_path, episode_name = os.path.split(episode_path)
-
-        """Run the entire preprocessing pipeline."""
-        self.cam_dir = os.path.join(os.path.abspath(episode_path), f'cam{cam_num}')
-        self.video_path = os.path.join(self.cam_dir, 'rgb')
-        self.depth_img_dir =  os.path.join(self.cam_dir, 'depth')
-        self.tmp_img_dir = os.path.join(self.cam_dir, 'tmp_images')
-        rename_images_sequentially(self.video_path, '.png')
-        rename_images_sequentially(self.depth_img_dir, '.npy')
-        self.background_img = f"configs/cam{cam_num}_background.png"
-        self.intrinsics_path = f"configs/intrinsics_cam{cam_num}.json"
-
-        process_data_path = os.path.join(self.process_path, episode_name, f'cam{cam_num}')
-        self.segmentation_out_dir =os.path.join(process_data_path, 'segment_out')
-        self.hamer_out_dir = os.path.join(process_data_path, 'hamer_out')
-        self.sphere_out_dir = process_data_path
-
-        start_time = time.time()
+    def prepare(self):
         print("🔹 Step 0: Preparing image frames and background...")
 
         img_count = len([f for f in os.listdir(self.video_path)
@@ -182,12 +163,37 @@ class HandPreprocessor:
                         os.symlink(src, dst)
         else:
             print("🔹 Step 1: Skipping frame copy, tmp images already exist.")
-        print(f"Preprocessing takes {time.time() - start_time:.2f} seconds for {img_count} frames.")
+        return img_count
+    
+    def process(self, episode_path, cam_num):
+        data_path, episode_name = os.path.split(episode_path)
+
+        """Run the entire preprocessing pipeline."""
+        self.cam_dir = os.path.join(os.path.abspath(episode_path), f'cam{cam_num}')
+        self.video_path = os.path.join(self.cam_dir, 'rgb')
+        self.depth_img_dir =  os.path.join(self.cam_dir, 'depth')
+        self.tmp_img_dir = os.path.join(self.cam_dir, 'tmp_images')
+        rename_images_sequentially(self.video_path, '.png')
+        rename_images_sequentially(self.depth_img_dir, '.npy')
+        self.background_img = f"configs/cam{cam_num}_background.png"
+        self.intrinsics_path = f"configs/intrinsics_cam{cam_num}.json"
+
+        process_data_path = os.path.join(self.process_path, episode_name, f'cam{cam_num}')
+        self.segmentation_out_dir =os.path.join(process_data_path)
+        self.hamer_out_dir = os.path.join(process_data_path, 'hamer_out')
+        self.sphere_out_dir = process_data_path
+
+        img_count = self.prepare()
         start_time = time.time()
         
         # run hamer to get hand poses and masks
         shortened = False if cam_num == 3 else True
-        self.hamer_mask(cam_num, shortened=shortened)
+        hand_poss = self.hamer_mask(cam_num, shortened=shortened)
+
+        if cam_num == 3:
+            np.save(os.path.join(self.process_path, episode_name, 'hand_poses.npy'), hand_poss)
+        
+
         print(f"Hamer processing takes {time.time() - start_time:.2f} seconds for {img_count} frames.")
         start_time = time.time()
 
@@ -196,9 +202,9 @@ class HandPreprocessor:
         print(f"Human segmentation takes {time.time() - start_time:.2f} seconds for {img_count} frames.")
         start_time = time.time()
 
-        # render spheres in place of hands
-        if cam_num == 3:
-            self.render_spheres(cam_num=cam_num)
+        # # render spheres in place of hands
+        # if cam_num == 3:
+        #     hand_poss = self.render_spheres(hand_poss, cam_num=cam_num)
 
         print(f"✅ Pipeline completed. Processed {img_count} frames in {round(time.time() - start_time, 2)} seconds.")
         # delete the tmp images

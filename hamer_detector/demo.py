@@ -7,6 +7,13 @@ import numpy as np
 import trimesh
 import sys
 sys.path.append("./")
+import time
+import json
+from typing import Dict, Optional
+from tqdm import tqdm
+
+from scipy.spatial.transform import Rotation as R
+
 from hamer.configs import CACHE_DIR_HAMER
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
@@ -14,18 +21,13 @@ from hamer.datasets.vitdet_dataset import ViTDetDataset, ViTDetDatasetBatch, DEF
 from hamer.utils.renderer import Renderer, cam_crop_to_full
 from hamer_detector.icp_conversion import extract_hand_point_cloud, compute_aligned_hamer_translation
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
-import time
-
-
-import json
-from typing import Dict, Optional
-from tqdm import tqdm
 
 def detect_hand(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False, batch_mode=False):
     if batch_mode:
-        detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
+        hand_poss = detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
     else:
-        detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
+        hand_poss = detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened)
+    return hand_poss
 
 def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False):
     min_score = 0.75
@@ -308,20 +310,10 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
         img_cv2 = cv2.imread(str(img_path))
         h, w = img_cv2.shape[:2]
         img_fn = os.path.splitext(os.path.basename(img_path))[0]
-        frame_id = int(img_fn.split('_')[0])
+        frame_id = img_fn.split('_')[0]
 
-        depth_img = None
-        for f in os.listdir(args.depth_folder):
-            if f.endswith(f"{frame_id}.npy"):
-                depth_img = np.load(os.path.join(args.depth_folder, f))  / 1000.
-                break
-            elif f.endswith(f"{frame_id}.png"):
-                depth_img = cv2.imread(os.path.join(args.depth_folder, f), cv2.IMREAD_UNCHANGED) / 1000.
-                if depth_img.shape != (h, w):
-                    raise ValueError("Depth and image shape mismatch")
-                break
-        if depth_img is None:
-            raise FileNotFoundError(f"No depth for {frame_id}")
+        depth_img = np.load(os.path.join(args.depth_folder, f"{frame_id}.npy"))  / 1000.
+        img_cv2[depth_img>1.3] = 0
 
         det_out = detector(img_cv2)
         det_instances = det_out['instances']
@@ -415,6 +407,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
                 mesh.export(os.path.join(args.out_folder, f'{img_fn}.obj'))
 
     # depth align and filtering and hand mask rendering
+    hand_poss = dict()
     for i, datapoint in enumerate(batched_entries):
         img_path = datapoint["img_path"]
 
@@ -453,15 +446,18 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
             else:
                 translation = hamer_aligned.mean(axis=0)
                 all_hand_results[img_fn]["pred_cam_t"] = translation.tolist()
-                
                 cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+
+                hand_translation = all_hand_results[img_fn]["pred_cam_t"]
+                hand_rotation = R.from_matrix(all_hand_results[img_fn]["global_orient"]).as_quat()
+                hand_pos = np.concatenate([hand_translation, hand_rotation])
+                hand_poss[img_fn] = hand_pos
 
 
     with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
         json.dump(all_hand_results, f, indent=2)
 
-    print(f"⏱️  Total processing time: {time.time() - starting_time:.2f} seconds")
-    print("✅ Done")
+    return hand_poss
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='HaMeR demo code')

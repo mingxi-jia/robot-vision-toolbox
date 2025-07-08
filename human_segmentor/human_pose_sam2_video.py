@@ -234,7 +234,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     points_with_labels = []
     frame_idx_list = []
 
-    selected_indices = np.linspace(1, len(hand_mask_paths) - 1, num=5, dtype=int)
+    selected_indices = np.linspace(0, len(hand_mask_paths) - 1, num=5, dtype=int) #TODO: why
     print(selected_indices)
     for i in selected_indices:
         mask_path = hand_mask_paths[i]
@@ -285,18 +285,16 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
             for i, out_obj_id in enumerate(out_obj_ids)
         }
 
-    os.makedirs(output_dir, exist_ok=True)
     color_output_folder = os.path.join(output_dir, 'segmented_rgb')
     os.makedirs(color_output_folder, exist_ok=True)
-    print("Saving color to", color_output_folder)
     depth_output_folder = os.path.join(output_dir, 'segmented_depth')
-    print("Saving depth to", depth_output_folder)
     os.makedirs(depth_output_folder, exist_ok=True)
+    
     for out_frame_idx in range(len(frame_names)):
         frame_path = os.path.join(video_dir, frame_names[out_frame_idx])
         image = cv2.imread(frame_path)
-        if image is None:
-            continue
+        # if image is None:
+        #     continue
 
         if out_frame_idx in video_segments:
             for out_obj_id, out_mask in video_segments[out_frame_idx].items():
@@ -316,7 +314,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
                 # Save background replaced version
                 if reference_image is not None:
                     replaced = replace_background(image, binary_mask, reference_image, ref_cam=ref_cam)
-                    final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}_segmented.png")
+                    final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}.png")
                     cv2.imwrite(final_path, replaced)
 
                 # ➕ Filter depth
@@ -328,7 +326,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
 
                     result_depth = masked_depth
                         
-                    np.save(os.path.join(depth_output_folder, f"{out_frame_idx:06d}_segmented.npy"), result_depth)
+                    np.save(os.path.join(depth_output_folder, f"{out_frame_idx:06d}.npy"), result_depth)
                     
                     if masked_depth is not None:
                         # Normalize depth for visualization
