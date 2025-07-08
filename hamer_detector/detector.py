@@ -17,9 +17,11 @@ from scipy.spatial.transform import Rotation as R
 from hamer.configs import CACHE_DIR_HAMER
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 from hamer.utils import recursive_to
-from hamer.datasets.vitdet_dataset import ViTDetDataset, ViTDetDatasetBatch, DEFAULT_MEAN, DEFAULT_STD
+from hamer.datasets.vitdet_dataset import ViTDetDataset, DEFAULT_MEAN, DEFAULT_STD
 from hamer.utils.renderer import Renderer, cam_crop_to_full
 from hamer_detector.icp_conversion import extract_hand_point_cloud, compute_aligned_hamer_translation
+
+from hamer_detector.vitdet_dataset_batch import ViTDetDatasetBatch
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
 
