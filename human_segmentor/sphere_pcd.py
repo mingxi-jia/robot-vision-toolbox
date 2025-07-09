@@ -103,16 +103,17 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
             combined_pcd,
             WORKSPACE
         )
-        combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=max_point_num)
+        combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
 
         # Render the sphere using the respective pose
-        pose = np.array(pose_dict[frame_idx]) # TODO: FIX 
-        pose = np.array(pose_wrt_world[frame_idx])
+        # pose = np.array(pose_dict[frame_idx]) # TODO: FIX 
+        pose = pose_wrt_world[frame_idx]
         sphere, = render_pcd_from_pose(pose[None, ...], fix_point_num=1024, model_type='sphere')
         sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
         if visualize_coordinate_axis:
             # Add coordinate axes to the sphere point cloud
-            add_coordinate_axes_from_pose(combined_pcd, pose[:3], pose[3:]) # TODO: FIX
+            frame_pcd = add_coordinate_axes_from_pose(pose[:3], pose[3:]) # TODO: FIX
+            sphere_pcd += frame_pcd
         combined_pcd += sphere_pcd
 
         # Save the point cloud to file

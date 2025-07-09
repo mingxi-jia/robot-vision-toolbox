@@ -237,18 +237,18 @@ def filter_point_cloud_by_workspace(pcd, workspace_limits):
 
 
 
-def add_coordinate_axes_from_pose(pcd, position, quaternion, axis_length=0.1):
+def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_point_num=512):
     """
-    Add coordinate axes to a point cloud at a given pose.
+    Generate a coordinate axes mesh at a given pose and return its downsampled point cloud.
 
     Args:
-        pcd (o3d.geometry.PointCloud): The point cloud.
         position (array-like): (x, y, z) position.
         quaternion (array-like): (qx, qy, qz, qw) quaternion orientation.
         axis_length (float): Length of the coordinate axes.
+        fixed_point_num (int): Number of points to sample from the coordinate axes.
 
     Returns:
-        list: List of geometries to visualize, including the point cloud and coordinate axes.
+        o3d.geometry.PointCloud: Downsampled point cloud of the coordinate axes.
     """
     # Convert quaternion to rotation matrix
     rot_matrix = R.from_quat(quaternion).as_matrix()
@@ -261,8 +261,14 @@ def add_coordinate_axes_from_pose(pcd, position, quaternion, axis_length=0.1):
     # Create coordinate frame and apply transform
     frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_length)
     frame.transform(transform)
-
-    return [pcd, frame]
+    # convert frame mesh to point cloud
+    frame_pcd = o3d.geometry.PointCloud()
+    frame_pcd.points = o3d.utility.Vector3dVector(np.asarray(frame.vertices))
+    frame_pcd.colors = o3d.utility.Vector3dVector(np.asarray(frame.vertex_colors))
+    # Downsample the point cloud to fixed_point_num
+    frame_pcd = frame_pcd.farthest_point_down_sample(num_samples=fixed_point_num)
+    
+    return frame_pcd
 
 if __name__ == "__main__":
 
