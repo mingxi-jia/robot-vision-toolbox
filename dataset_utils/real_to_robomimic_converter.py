@@ -285,6 +285,7 @@ class RealToRobomimicConverter:
 
 if __name__ == "__main__":
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")
-    converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
+    # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
+    converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71//Desktop/robotool_data/06232025", output_robomimic_path="/home/xhe71/Desktop/robotool_data/06232025/test_multiview_abs.hdf5")
     converter.convert()
     

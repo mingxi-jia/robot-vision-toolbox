@@ -12,26 +12,6 @@ from vision_utils.pcd_utils import *
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
 
 
-def visualize_pcd_loop(pcd_sequence):
-    assert len(pcd_sequence) > 0, "No point clouds provided"
-    vis = o3d.visualization.VisualizerWithKeyCallback()
-    vis.create_window(window_name="3D Loop Viewer", width=640, height=380)
-    vis.get_render_option().point_size = 2.0
-
-    current_idx = 0
-
-    def update_view(vis):
-        nonlocal current_idx
-        vis.clear_geometries()
-        vis.add_geometry(pcd_sequence[current_idx])
-        current_idx = (current_idx + 1) % len(pcd_sequence)
-        return False  # Continue animation
-
-    vis.register_animation_callback(update_view)
-    vis.add_geometry(pcd_sequence[0])
-    vis.run()
-    vis.destroy_window()
-
 def uvz_to_world(u, v, z, intrinsics, extrinsics):
     fx, fy = intrinsics[0, 0], intrinsics[1, 1]
     cx, cy = intrinsics[0, 2], intrinsics[1, 2]
@@ -60,7 +40,7 @@ def convert_hamer_pose_to_extrinsic(hand_data, extrinsics):
     return global_pose
         
         
-def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True):
+def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False):
     """
     Generate a sequence of point clouds from RGB-D images and sphere poses.
     
@@ -91,7 +71,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     cam_extrinsics = cam_info_dict[main_cam_name]['extrinsics']
 
     # Load sphere hand pose and convert to world poses
-    pose_path = os.path.join(output_path, episode_name, 'hand_poses.npy')
+    pose_path = os.path.join(output_path, episode_name, f'hand_poses_wrt_cam{sphere_cam}.npy')
     hand_pose = np.load(pose_path, allow_pickle=True)[()]
     pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
 
@@ -126,9 +106,13 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
         combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=max_point_num)
 
         # Render the sphere using the respective pose
-        pose = np.array(pose_dict[frame_idx])
+        pose = np.array(pose_dict[frame_idx]) # TODO: FIX 
+        pose = np.array(pose_wrt_world[frame_idx])
         sphere, = render_pcd_from_pose(pose[None, ...], fix_point_num=1024, model_type='sphere')
         sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
+        if visualize_coordinate_axis:
+            # Add coordinate axes to the sphere point cloud
+            add_coordinate_axes_from_pose(combined_pcd, pose[:3], pose[3:]) # TODO: FIX
         combined_pcd += sphere_pcd
 
         # Save the point cloud to file

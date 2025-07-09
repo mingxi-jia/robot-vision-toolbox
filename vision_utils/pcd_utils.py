@@ -10,6 +10,7 @@ from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
 from configs.workspace import WORKSPACE, VOXEL_RESOLUTION, WS_SIZE, VOXEL_SIZE
 
+
 current_file_path = os.path.dirname(os.path.abspath(__file__))
 gripper_asset = o3d.io.read_point_cloud(os.path.join(current_file_path, "./gripper.ply"))
 xyz_numpy = np.asarray(gripper_asset.points).astype(np.float32)
@@ -233,6 +234,35 @@ def filter_point_cloud_by_workspace(pcd, workspace_limits):
     filtered_pcd = pcd.select_by_index(filtered_indices)
 
     return filtered_pcd
+
+
+
+def add_coordinate_axes_from_pose(pcd, position, quaternion, axis_length=0.1):
+    """
+    Add coordinate axes to a point cloud at a given pose.
+
+    Args:
+        pcd (o3d.geometry.PointCloud): The point cloud.
+        position (array-like): (x, y, z) position.
+        quaternion (array-like): (qx, qy, qz, qw) quaternion orientation.
+        axis_length (float): Length of the coordinate axes.
+
+    Returns:
+        list: List of geometries to visualize, including the point cloud and coordinate axes.
+    """
+    # Convert quaternion to rotation matrix
+    rot_matrix = R.from_quat(quaternion).as_matrix()
+
+    # Construct 4x4 transformation matrix
+    transform = np.eye(4)
+    transform[:3, :3] = rot_matrix
+    transform[:3, 3] = position
+
+    # Create coordinate frame and apply transform
+    frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_length)
+    frame.transform(transform)
+
+    return [pcd, frame]
 
 if __name__ == "__main__":
 

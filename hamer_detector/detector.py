@@ -408,7 +408,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
     for i, datapoint in enumerate(batched_entries):
         img_path = datapoint["img_path"]
 
-        print(f"\n🖼️ Processing image: {img_path.name}")
+        # print(f"\n🖼️ Processing image: {img_path.name}")
         img_cv2 = cv2.imread(str(img_path))
         h, w = img_cv2.shape[:2]
         img_fn = os.path.splitext(os.path.basename(img_path))[0]

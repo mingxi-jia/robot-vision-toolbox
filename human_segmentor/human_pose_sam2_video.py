@@ -234,7 +234,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     points_with_labels = []
     frame_idx_list = []
 
-    selected_indices = np.linspace(0, len(hand_mask_paths) - 1, num=5, dtype=int) #TODO: why
+    selected_indices = np.linspace(0, len(hand_mask_paths)-1, num=min(len(hand_mask_paths),3), dtype=int) #TODO: why
     print(selected_indices)
     for i in selected_indices:
         mask_path = hand_mask_paths[i]
@@ -293,48 +293,52 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     for out_frame_idx in range(len(frame_names)):
         frame_path = os.path.join(video_dir, frame_names[out_frame_idx])
         image = cv2.imread(frame_path)
+        
         # if image is None:
         #     continue
 
         if out_frame_idx in video_segments:
-            for out_obj_id, out_mask in video_segments[out_frame_idx].items():
-                binary_mask = out_mask.astype(np.uint8)
-                # ➕ Dilate the mask to add a 1-pixel contour
-                kernel = np.ones((3, 3), np.uint8)
-                binary_mask = cv2.dilate(binary_mask, kernel, iterations=1)
+            # Get the mask of the first segmented object(assume only 1) for the current frame
+            out_mask = next(iter(video_segments[out_frame_idx].values()))
+            binary_mask = out_mask.astype(np.uint8)
+            # ➕ Dilate the mask to add a 1-pixel contour
+            kernel = np.ones((3, 3), np.uint8)
+            binary_mask = cv2.dilate(binary_mask, kernel, iterations=1)
+        else:
+            binary_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+            
+        # If debug mode, save overlay with green mask
+        if debug:
+            colored_mask = np.zeros_like(image, dtype=np.uint8)
+            colored_mask[binary_mask == 1] = (0, 255, 0)
+            overlay_image = cv2.addWeighted(image, 0.5, colored_mask, 0.5, 0)
+            debug_path = os.path.join(color_output_folder, f"[debug]{out_frame_idx:06d}_segmented[debug].png")
+            cv2.imwrite(debug_path, overlay_image)
 
-                # If debug mode, save overlay with green mask
-                if debug:
-                    colored_mask = np.zeros_like(image, dtype=np.uint8)
-                    colored_mask[binary_mask == 1] = (0, 255, 0)
-                    overlay_image = cv2.addWeighted(image, 0.5, colored_mask, 0.5, 0)
-                    debug_path = os.path.join(color_output_folder, f"[debug]{out_frame_idx:06d}_segmented[debug].png")
-                    cv2.imwrite(debug_path, overlay_image)
+        # Save background replaced version
+        if reference_image is not None:
+            replaced = replace_background(image, binary_mask, reference_image, ref_cam=ref_cam)
+            final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}.png")
+            cv2.imwrite(final_path, replaced)
 
-                # Save background replaced version
-                if reference_image is not None:
-                    replaced = replace_background(image, binary_mask, reference_image, ref_cam=ref_cam)
-                    final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}.png")
-                    cv2.imwrite(final_path, replaced)
+        # ➕ Filter depth
+        depth_name = f"{int(Path(frame_names[out_frame_idx]).stem):06d}.npy"
+        depth_path = os.path.join(depth_folder, depth_name)
+        if os.path.exists(depth_path):
+            depth = np.load(depth_path)
+            masked_depth, points = remove_masked_depth_points(depth, binary_mask, intrinsics)
 
-                # ➕ Filter depth
-                depth_name = f"{int(Path(frame_names[out_frame_idx]).stem):06d}.npy"
-                depth_path = os.path.join(depth_folder, depth_name)
-                if os.path.exists(depth_path):
-                    depth = np.load(depth_path)
-                    masked_depth, points = remove_masked_depth_points(depth, binary_mask, intrinsics)
-
-                    result_depth = masked_depth
-                        
-                    np.save(os.path.join(depth_output_folder, f"{out_frame_idx:06d}.npy"), result_depth)
-                    
-                    if masked_depth is not None:
-                        # Normalize depth for visualization
-                        normalized_depth = cv2.normalize(result_depth, None, 0, 255, cv2.NORM_MINMAX)
-                        depth_visual = normalized_depth.astype(np.uint8)
-                        depth_colormap = cv2.applyColorMap(depth_visual, cv2.COLORMAP_JET)
-                        vis_path = os.path.join(depth_output_folder, f"{out_frame_idx:06d}_depth_vis.png")
-                        cv2.imwrite(vis_path, depth_colormap)
+            result_depth = masked_depth
+                
+            np.save(os.path.join(depth_output_folder, f"{out_frame_idx:06d}.npy"), result_depth)
+            
+            if masked_depth is not None:
+                # Normalize depth for visualization
+                normalized_depth = cv2.normalize(result_depth, None, 0, 255, cv2.NORM_MINMAX)
+                depth_visual = normalized_depth.astype(np.uint8)
+                depth_colormap = cv2.applyColorMap(depth_visual, cv2.COLORMAP_JET)
+                vis_path = os.path.join(depth_output_folder, f"{out_frame_idx:06d}_depth_vis.png")
+                cv2.imwrite(vis_path, depth_colormap)
     
     convert_image_format(source_frames, ".png")
 
