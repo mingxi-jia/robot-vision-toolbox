@@ -654,7 +654,7 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
             rot4x4 = np.eye(4)
             rot4x4[:3, :3] = hand_rotation
             flipped_hand_rotation = (flip_rot @ rot4x4)[:3, :3]
-
+            # TODO: MODIFY HAND ORIENTATION HERE
             smoothed_data[fid]["pred_cam_t"] = hand_translation.tolist()
             smoothed_data[fid]["global_orient"] = [flipped_hand_rotation.tolist()]  # Use original orientation (not smoothed)
             
