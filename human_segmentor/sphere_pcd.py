@@ -74,7 +74,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     pose_path = os.path.join(output_path, episode_name, f'hand_poses_wrt_cam{sphere_cam}.npy')
     hand_pose = np.load(pose_path, allow_pickle=True)[()]
     pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
-
+    
     frame_sequence = []
     max_point_num = MAX_POINT_NUM
     # Workspace filtering parameters

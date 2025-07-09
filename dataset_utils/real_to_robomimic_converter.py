@@ -94,7 +94,7 @@ class RealToRobomimicConverter:
     def preprocess(self, hamer: Hamer):
         for episode_name in tqdm(self.episode_list, desc="Preprocessing episodes"):
             # done_indicator = os.path.join(self.process_path, episode_name, "DONE")
-            done_indicator = os.path.join(self.process_path, episode_name, "hand_poses.npy")
+            done_indicator = os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy")
             if os.path.exists(done_indicator):
                 print(f"Episode {episode_name} already processed. Skipping...")
                 continue
@@ -104,10 +104,11 @@ class RealToRobomimicConverter:
             for cam_id in [1, 2, 3]:
                 print(f"\n========= Processing Camera {cam_id} =========")
                 hamer.process(episode_path, cam_id)
-            # generate pcd with human in it
-            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True)
             # generate pcd with rendered sphere
-            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False)
+            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False, visualize_coordinate_axis=True)
+            # generate pcd with human in it
+            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis=True)
+            
             np.save(os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy"), poses_wrt_world, allow_pickle=True)
             print(f"Episode {episode_name} processed in {time.time() - starting_time:.2f} seconds.")
 
@@ -285,7 +286,7 @@ class RealToRobomimicConverter:
 
 if __name__ == "__main__":
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")
-    converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
-    # converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71//Desktop/robotool_data/06232025", output_robomimic_path="/home/xhe71/Desktop/robotool_data/06232025/test_multiview_abs.hdf5")
+    # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
+    converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71/Desktop/robotool_data/hand_rotation_test", output_robomimic_path="/home/xhe71/Desktop/robotool_data/hand_rotation_test/test_multiview_abs.hdf5")
     converter.convert()
     

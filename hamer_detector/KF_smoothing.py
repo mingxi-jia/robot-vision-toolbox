@@ -6,7 +6,7 @@ from scipy.spatial.transform import Rotation as R
 from scipy.spatial.transform import Slerp
 import os
 from scipy.signal import medfilt
-
+import trimesh
 # === Global smoothing settings ===
 # for sample rate less that 3
 SMOOTH_PARAMS = {
@@ -649,11 +649,17 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
             # Only smooth translation, keep orientation as original (do not smooth quaternion/orientation)
             hand_translation = smoothed_cam_ts[i]
             hand_rotation = rot_mats[i]
+            
+            flip_rot = trimesh.transformations.rotation_matrix(np.pi, [1, 0, 0])
+            rot4x4 = np.eye(4)
+            rot4x4[:3, :3] = hand_rotation
+            flipped_hand_rotation = (flip_rot @ rot4x4)[:3, :3]
 
             smoothed_data[fid]["pred_cam_t"] = hand_translation.tolist()
-            smoothed_data[fid]["global_orient"] = [hand_rotation.tolist()]  # Use original orientation (not smoothed)
+            smoothed_data[fid]["global_orient"] = [flipped_hand_rotation.tolist()]  # Use original orientation (not smoothed)
             
-            hand_pos = np.concatenate([hand_translation, quats[i]])
+            rot = R.from_matrix(flipped_hand_rotation).as_quat()
+            hand_pos = np.concatenate([hand_translation, rot])
             hand_poss[fid] = hand_pos
 
     output_path = os.path.splitext(json_path)[0] + "_smoothed.json"
@@ -664,4 +670,11 @@ def smooth_hand_pose_json_KF(json_path, skip_rate = 1):
 
 # === Example use ===
 if __name__ == "__main__":
-    smooth_hand_pose_json_KF("/home/xhe71/Desktop/robotool_data/06232025/slow/cam1/rgb_hamer/hand_pose_camera_info.json")
+    smooth_hand_pose_json_KF("/home/xhe71/Desktop/robotool_data/hand_rotation_test/output/episode_0/cam3/hamer_out/hand_pose_camera_info.json")
+    from human_segmentor.sphere_pcd import generate_pcd_sequence
+    from dataset_utils.real_to_robomimic_converter import load_camera_info_dict
+    cam_info = load_camera_info_dict("configs/camera_info.yaml")
+    generate_pcd_sequence(
+        "/home/xhe71/Desktop/robotool_data/hand_rotation_test/",
+        "/home/xhe71/Desktop/robotool_data/hand_rotation_test/output", cam_info
+    )

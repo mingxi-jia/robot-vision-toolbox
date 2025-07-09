@@ -237,7 +237,7 @@ def filter_point_cloud_by_workspace(pcd, workspace_limits):
 
 
 
-def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_point_num=512):
+def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_point_num=1024):
     """
     Generate a coordinate axes mesh at a given pose and return its downsampled point cloud.
 
