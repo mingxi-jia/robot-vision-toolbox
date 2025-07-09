@@ -93,9 +93,9 @@ class RealToRobomimicConverter:
 
     def preprocess(self, hamer: Hamer):
         for episode_name in tqdm(self.episode_list, desc="Preprocessing episodes"):
-            done_indicator = os.path.join(self.process_path, episode_name, "DONE")
-            # done_indicator = os.path.join(self.process_path, episode_name, "hand_poses.npy")
-            if done_indicator:
+            # done_indicator = os.path.join(self.process_path, episode_name, "DONE")
+            done_indicator = os.path.join(self.process_path, episode_name, "hand_poses.npy")
+            if os.path.exists(done_indicator):
                 print(f"Episode {episode_name} already processed. Skipping...")
                 continue
             
@@ -105,10 +105,14 @@ class RealToRobomimicConverter:
                 print(f"\n========= Processing Camera {cam_id} =========")
                 hamer.process(episode_path, cam_id)
             # generate pcd with human in it
-            generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True)
+            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True)
             # generate pcd with rendered sphere
-            generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False)
+            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False)
+            np.save(os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy"), poses_wrt_world, allow_pickle=True)
             print(f"Episode {episode_name} processed in {time.time() - starting_time:.2f} seconds.")
+
+            with open(os.path.join(self.process_path, episode_name, 'DONE'), "a") as f:
+                f.write("This is a marker file to indicate that the preprocessing is done for this episode.\n")
 
 
     def process_raw_pcd(self, pcd: np.ndarray):
@@ -116,9 +120,9 @@ class RealToRobomimicConverter:
                              (pcd[:, 1] > self.workspace[1, 0]) & (pcd[:, 1] < self.workspace[1, 1]) &
                              (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1]))]
         
-        pcd_np[:, 0] -= (self.workspace[0, 0] + self.workspace[0, 1]) / 2  # Center X coordinate
-        pcd_np[:, 1] -= (self.workspace[1, 0] + self.workspace[1, 1]) / 2  # Center X coordinate
-        pcd_np[:, 2] += self.robomimic_center[2]  # Adjust Z coordinate to match the table height in robomimic
+        # pcd_np[:, 0] -= (self.workspace[0, 0] + self.workspace[0, 1]) / 2  # Center X coordinate
+        # pcd_np[:, 1] -= (self.workspace[1, 0] + self.workspace[1, 1]) / 2  # Center X coordinate
+        # pcd_np[:, 2] += self.robomimic_center[2]  # Adjust Z coordinate to match the table height in robomimic
 
         pcd_o3d = o3d.geometry.PointCloud()
         pcd_o3d.points = o3d.utility.Vector3dVector(pcd_np[:, :3])
@@ -171,7 +175,7 @@ class RealToRobomimicConverter:
         episode_path = os.path.join(self.real_dataset_path, episode_name)
         process_episode_path = os.path.join(self.process_path, episode_name)
         traj_length = self.get_traj_length(episode_name)
-        ee_poss: dict = np.load(os.path.join(process_episode_path, "hand_poses.npy"), allow_pickle=True)[()]
+        ee_poss: dict = np.load(os.path.join(process_episode_path, "hand_poses_wrt_world.npy"), allow_pickle=True)[()]
         
         rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
@@ -223,52 +227,6 @@ class RealToRobomimicConverter:
             'dones': dones
         }
 
-
-        return trajectory
-
-    def load_trajectory_dummy(self, episode_idx: int):
-        episode_path = os.path.join(self.real_dataset_path, f"episode_{episode_idx}")
-        traj_length = self.get_traj_length(episode_idx)
-        
-        rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
-        depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
-        pcd_seq = []
-        for frame_idx in range(traj_length):
-            pcds = []
-            for cam in self.cam_list:
-                rgb = np.zeros((480, 640, 3), dtype=np.uint8) # Dummy RGB
-                depth = np.zeros((480, 640), dtype=np.float32) # Dummy Depth
-                pcd = np.zeros((self.fix_point_num, 6), dtype=np.float32) # Dummy PCD
-                pcd[:, :3] = np.random.uniform(self.workspace[:, 0], self.workspace[:, 1], size=(self.fix_point_num, 3))  # Random points in workspace
-
-                rgb_dict[f'{cam}_image'].append(rgb)
-                depth_dict[f'{cam}_depth'].append(depth)
-                pcds.append(pcd)
-
-            p = np.concatenate(pcds, axis=0)
-            pcd_seq.append(self.process_raw_pcd(p)[0])  # Processed PCD
-
-
-        actions = np.zeros((traj_length, 7), dtype=np.float32) # xyz, axis-angle, gripper
-        states = np.zeros((traj_length, 10), dtype=np.float32)
-        rewards = np.zeros((traj_length, 1), dtype=np.float32)
-        rewards[-1] = 1.0
-        dones = rewards.copy().astype(bool)
-
-        state_dict = dict()
-        state_dict['robot0_eef_pos'] = np.zeros((traj_length, 3), dtype=np.float32)  # Assuming first 3 are position
-        state_dict['robot0_eef_quat'] = np.zeros((traj_length, 4), dtype=np.float32)
-        obs = {**rgb_dict, **depth_dict, **state_dict, 'pcd': np.stack(pcd_seq)}
-        # merge obs and rgb_dict
-
-
-        trajectory = {
-            'obs': obs,
-            'states': states,
-            'actions': actions,
-            'rewards': rewards,
-            'dones': dones
-        }
 
         return trajectory
     

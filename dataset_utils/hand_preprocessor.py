@@ -246,10 +246,9 @@ class HandPreprocessor:
 
         # Save hand poses to file 
         if cam_num == self.main_cam_idx:
-            np.save(os.path.join(self.process_path, episode_name, 'hand_poses.npy'), hand_poss)
+            np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{self.main_cam_idx}.npy'), hand_poss)
 
-        with open(os.path.join(self.process_path, episode_name, 'DONE'), "a") as f:
-            f.write("This is a marker file to indicate that the preprocessing is done for this episode.\n")
+        
         
 
 # =================== Run all 3 camera views ===================

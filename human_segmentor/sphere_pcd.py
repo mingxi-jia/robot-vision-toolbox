@@ -93,15 +93,15 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     # Load sphere hand pose and convert to world poses
     pose_path = os.path.join(output_path, episode_name, 'hand_poses.npy')
     hand_pose = np.load(pose_path, allow_pickle=True)[()]
-    pose_dict = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
+    pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
 
     frame_sequence = []
     max_point_num = MAX_POINT_NUM
     # Workspace filtering parameters
 
     # Process each frame based on the pose dictionary keys
-    print(f"Generating point cloud sequence from episode: {episode_path} with {len(pose_dict.keys())} frames")
-    for frame_idx in sorted(pose_dict.keys()):
+    print(f"Generating point cloud sequence from episode: {episode_path} with {len(pose_wrt_world.keys())} frames")
+    for frame_idx in sorted(pose_wrt_world.keys()):
         combined_pcd = o3d.geometry.PointCloud()
         
         # Loop over each camera view
@@ -140,7 +140,18 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
         
         frame_sequence.append(combined_pcd)
 
-    return frame_sequence
+    return pose_wrt_world
+def convert_pose_to_world(episode_list, process_path, info_dict, main_cam=3):
+    from tqdm import tqdm
+    for episode_name in tqdm(episode_list, desc="Preprocessing episodes"):
+            # done_indicator = os.path.join(self.process_path, episode_name, "DONE")
+        done_indicator = os.path.join(process_path, episode_name, "hand_poses.npy")
+        if os.path.exists(done_indicator):
+            print(f"Episode {episode_name} already processed. Skipping...")
+            hand_poses_path = os.path.join(process_path, episode_name, "hand_poses.npy")
+            hand_pose = np.load(hand_poses_path, allow_pickle=True)[()]
+            pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, info_dict[main_cam]['extrinsics'])
+            np.save(os.path.join(process_path, episode_name, "hand_poses_wrt_world.npy"), pose_wrt_world, allow_pickle=True)
 
 if __name__ == "__main__":
     import yaml
