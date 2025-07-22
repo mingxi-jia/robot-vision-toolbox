@@ -4,6 +4,7 @@ import open3d as o3d
 import numpy as np
 import time
 import json
+import yaml
 from scipy.spatial.transform import Rotation as R
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
@@ -39,7 +40,38 @@ def convert_hamer_pose_to_extrinsic(hand_data, extrinsics):
         global_pose[frame_name] = np.concatenate([xyz_wrt_world, quat_wrt_world])
     return global_pose
         
-        
+
+
+def apply_alignment_rotation(pose, yaml_path='./configs/hamer_alignment_matrix.yaml'):
+    """
+    Apply saved alignment rotation (as quaternion) from YAML to a given pose.
+    Assumes pose is in [x, y, z, qx, qy, qz, qw] format.
+
+    Returns:
+        aligned_pose: Pose with rotated orientation, original translation.
+    """
+    # Load alignment config
+    with open(yaml_path, 'r') as f:
+        alignment_config = yaml.safe_load(f)
+    
+    if 'quat_transform' not in alignment_config:
+        raise KeyError("quat_transform not found in the YAML config.")
+    
+    # Extract rotation matrix from quaternion
+    align_quat = alignment_config['quat_transform']
+    R_align = R.from_quat(align_quat).as_matrix()
+    
+    # Extract input pose rotation and translation
+    t = np.array(pose[:3])
+    R_pose = R.from_quat(pose[3:]).as_matrix()
+
+    # Apply rotation to rotation
+    R_aligned =  R_pose @ R_align
+
+    # Reconstruct quaternion from aligned rotation
+    quat_aligned = R.from_matrix(R_aligned).as_quat()
+    return np.concatenate([t, quat_aligned])
+
 def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False):
     """
     Generate a sequence of point clouds from RGB-D images and sphere poses.
@@ -108,6 +140,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
         # Render the sphere using the respective pose
         # pose = np.array(pose_dict[frame_idx]) # TODO: FIX 
         pose = pose_wrt_world[frame_idx]
+        pose = apply_alignment_rotation(pose)
         sphere, = render_pcd_from_pose(pose[None, ...], fix_point_num=1024, model_type='sphere')
         sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
         if visualize_coordinate_axis:
@@ -137,6 +170,7 @@ def convert_pose_to_world(episode_list, process_path, info_dict, main_cam=3):
             hand_pose = np.load(hand_poses_path, allow_pickle=True)[()]
             pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, info_dict[main_cam]['extrinsics'])
             np.save(os.path.join(process_path, episode_name, "hand_poses_wrt_world.npy"), pose_wrt_world, allow_pickle=True)
+            print(f"saved to hand_poses_wrt_world")
 
 if __name__ == "__main__":
     import yaml
@@ -144,8 +178,19 @@ if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import subprocess
 
+    def load_camera_info_dict(info_path: str):
+        assert info_path.endswith(".yaml"), "Info file should be a yaml file"
+        with open(info_path, 'r') as f:
+            info_dict = yaml.safe_load(f)
+        for cam_name, cam_info in info_dict.items():
+            info_dict[cam_name]['intrinsics'] = np.array(cam_info['k']).reshape(3, 3)
+            info_dict[cam_name]['extrinsics'] = get_extrinsics_matrix(cam_info['t'], cam_info['q'])
+        return info_dict
     # Example usage
-    data_path = "/home/xhe71/Desktop/robotool_data/06232025/episode_20250623_173802_495"
-    frame_sequence = generate_pcd_sequence(data_path, start_frame=0, sphere_cam=3)
+    data_path = "/home/xhe71/Desktop/robotool_data//home/xhe71/Desktop/robotool_data/hand_rotation_test/output/episode_0/"
+    out_path = "/home/xhe71/Desktop/robotool_data/hand_rotation_test/output/episode_0/"
+    cam_info = load_camera_info_dict("configs/camera_info.yaml")
+    frame_sequence = generate_pcd_sequence(data_path, out_path, cam_info,
+                                           segment=True, visualize_coordinate_axis = True)
 
 
