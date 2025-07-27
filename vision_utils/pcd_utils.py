@@ -270,6 +270,48 @@ def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_p
     
     return frame_pcd
 
+def pcd_to_voxel(pcds: np.ndarray, gripper_crop: float = None):
+    assert pcds.shape[2] == 6, "PCD CONVERSION ERROR: pcd shape is incorrect"
+    assert (pcds[0, :, 3:6] <= 1.).all(), "PCD CONVERSION ERROR: pcd color is incorrect"
+
+    # Define voxel bounds
+    if gripper_crop is None:
+        voxel_bound = WORKSPACE.T
+    else:
+        voxel_bound = np.array([
+            [-gripper_crop, gripper_crop],
+            [-gripper_crop, gripper_crop],
+            [-gripper_crop, gripper_crop]
+        ]).T
+
+    # Precompute voxel grid dimensions
+    grid_min = voxel_bound[0]
+    grid_max = voxel_bound[1]
+    grid_size = ((grid_max - grid_min) / VOXEL_SIZE).astype(int)
+    grid_size = np.clip(grid_size, 0, VOXEL_RESOLUTION)
+
+    batch_voxels= []
+    for i, pcd in enumerate(pcds):
+        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud_within_bounds(np2o3d(pcd[:,:3], pcd[:,3:]), voxel_size=VOXEL_SIZE, min_bound=voxel_bound[0], max_bound=voxel_bound[1])
+        voxels = voxel_grid.get_voxels()  # returns list of voxels
+        if len(voxels) == 0:
+            np_voxels = np.zeros([4, VOXEL_RESOLUTION, VOXEL_RESOLUTION, VOXEL_RESOLUTION], dtype=np.uint8)
+        else:
+            indices = np.stack(list(vx.grid_index for vx in voxels))
+            colors = np.stack(list(vx.color for vx in voxels))
+
+            mask = (indices > 0) * (indices < VOXEL_RESOLUTION)
+            indices = indices[mask.all(axis=1)]
+            colors = colors[mask.all(axis=1)]
+
+            np_voxels = np.zeros([4, VOXEL_RESOLUTION, VOXEL_RESOLUTION, VOXEL_RESOLUTION], dtype=np.uint8)
+            np_voxels[0, indices[:, 0], indices[:, 1], indices[:, 2]] = 1
+            np_voxels[1:, indices[:, 0], indices[:, 1], indices[:, 2]] = colors.T * 255
+        
+        batch_voxels.append(np_voxels)
+    batch_voxels = np.stack(batch_voxels)
+    return batch_voxels
+    
 if __name__ == "__main__":
 
     data_path = "/home/mingxi/data/realworld/red_on_yellow_hand_0703/episode_20250703_125142_958"
@@ -347,44 +389,3 @@ if __name__ == "__main__":
         file_name = os.path.join(save_pcd_path, f"{frame_i:04d}.ply")
         o3d.io.write_point_cloud(os.path.join(save_pcd_path, file_name), all_pcds)
 
-def pcd_to_voxel(pcds: np.ndarray, gripper_crop: float = None):
-    assert pcds.shape[2] == 6, "PCD CONVERSION ERROR: pcd shape is incorrect"
-    assert (pcds[0, :, 3:6] <= 1.).all(), "PCD CONVERSION ERROR: pcd color is incorrect"
-
-    # Define voxel bounds
-    if gripper_crop is None:
-        voxel_bound = WORKSPACE.T
-    else:
-        voxel_bound = np.array([
-            [-gripper_crop, gripper_crop],
-            [-gripper_crop, gripper_crop],
-            [-gripper_crop, gripper_crop]
-        ]).T
-
-    # Precompute voxel grid dimensions
-    grid_min = voxel_bound[0]
-    grid_max = voxel_bound[1]
-    grid_size = ((grid_max - grid_min) / VOXEL_SIZE).astype(int)
-    grid_size = np.clip(grid_size, 0, VOXEL_RESOLUTION)
-
-    batch_voxels= []
-    for i, pcd in enumerate(pcds):
-        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud_within_bounds(np2o3d(pcd[:,:3], pcd[:,3:]), voxel_size=VOXEL_SIZE, min_bound=voxel_bound[0], max_bound=voxel_bound[1])
-        voxels = voxel_grid.get_voxels()  # returns list of voxels
-        if len(voxels) == 0:
-            np_voxels = np.zeros([4, VOXEL_RESOLUTION, VOXEL_RESOLUTION, VOXEL_RESOLUTION], dtype=np.uint8)
-        else:
-            indices = np.stack(list(vx.grid_index for vx in voxels))
-            colors = np.stack(list(vx.color for vx in voxels))
-
-            mask = (indices > 0) * (indices < VOXEL_RESOLUTION)
-            indices = indices[mask.all(axis=1)]
-            colors = colors[mask.all(axis=1)]
-
-            np_voxels = np.zeros([4, VOXEL_RESOLUTION, VOXEL_RESOLUTION, VOXEL_RESOLUTION], dtype=np.uint8)
-            np_voxels[0, indices[:, 0], indices[:, 1], indices[:, 2]] = 1
-            np_voxels[1:, indices[:, 0], indices[:, 1], indices[:, 2]] = colors.T * 255
-        
-        batch_voxels.append(np_voxels)
-    batch_voxels = np.stack(batch_voxels)
-    return batch_voxels
