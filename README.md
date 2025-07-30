@@ -134,6 +134,6 @@ ffmpeg -f concat -safe 0 -r 30 -i list.txt -c:v libx264 -pix_fmt yuv420p output_
 - [x] sam segmentor
 - [x] single-view video segmentation
 - [x] point cloud projection
-- [ ] realtime cloud visualization
-- [ ] multi-view video sementation
-- [ ] multi-view rgbd segmentation to segmented point clouds
+- [x] realtime cloud visualization
+- [x] multi-view video sementation
+- [x] multi-view rgbd segmentation to segmented point clouds

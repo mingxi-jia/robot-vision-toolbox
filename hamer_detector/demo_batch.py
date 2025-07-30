@@ -65,7 +65,6 @@ def detect_hand(args):
 
     # load images and get ViTPose predictions
     for img_path in img_paths:
-        # print(f"\n🖼️ Processing image: {img_path.name}")
         img_cv2 = cv2.imread(str(img_path))
         h, w = img_cv2.shape[:2]
         img_fn = os.path.splitext(os.path.basename(img_path))[0]

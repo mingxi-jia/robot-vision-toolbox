@@ -105,6 +105,30 @@ def depth2fgpcd(depth, cam_params):
     fgpcd[:, 2] = depth[mask]
     return fgpcd, mask
 
+def convert_RGBD_fast(rgb, depth, intrinsics, extrinsics, max_points=100_000):
+    fx, fy, cx, cy = intrinsics[0, 0], intrinsics[1, 1], intrinsics[0, 2], intrinsics[1, 2]
+    mask = (depth > 0) & (depth < 2.0)
+    ys, xs = np.where(mask)
+    z = depth[ys, xs]
+    x = (xs - cx) * z / fx
+    y = (ys - cy) * z / fy
+    points = np.stack((x, y, z), axis=1)
+
+    # Apply extrinsics (rotate+translate)
+    points_h = np.hstack((points, np.ones((points.shape[0], 1))))
+    points_world = (points_h @ extrinsics.T)[:, :3]
+
+    # Sample to reduce data size
+    if points_world.shape[0] > max_points:
+        idx = np.random.choice(points_world.shape[0], max_points, replace=False)
+        points_world = points_world[idx]
+        colors = rgb[ys[idx], xs[idx]] / 255.0
+    else:
+        colors = rgb[ys, xs] / 255.0
+
+    # Return only numpy, defer Open3D creation
+    return np.hstack((points_world, colors))
+
 def convert_RGBD_to_open3d(rgb, depth, intrinsics, extrinsics):
     assert rgb.shape[0] == depth.shape[0] and rgb.shape[1] == depth.shape[1]
     assert intrinsics.shape == (3, 3)
@@ -153,33 +177,57 @@ def apply_se3_pcd_transform(points, transform):
     new_points[:, :3] = transformed_points[:, :3]
     return new_points
 
+# def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
+#     """
+#     Render the gripper point cloud at the given end effector pose.
+#     ee_pose has a shpae of (N, 7) where 7 means (x, y, z, qx, qy, qz, qw)
+#     is_add_noisy is used to add noise to the point cloud.
+#     """
+#     if model_type == 'gripper':
+#         model_pcd = GRIPPER
+#     elif model_type == 'sphere':
+#         model_pcd = SPHERE
+#     else:
+#         raise NotImplementedError(f"model type {model_type} not implemented")
+
+#     B = list(ee_pose.shape[:-1])
+        
+#     ee_pose = ee_pose.reshape(-1, 7)
+#     batch_size, ndim = ee_pose.shape
+#     pcds = []
+#     for i in range(batch_size):
+#         gripper_pcd = copy.copy(model_pcd)
+#         tran_mat = np.eye(4)
+#         tran_mat[:3, 3] = ee_pose[i, :3] 
+#         tran_mat[:3, :3] = R.from_quat(ee_pose[i, 3:7]).as_matrix()
+#         pcd = apply_se3_pcd_transform(gripper_pcd, tran_mat)
+#         pcds.append(populate_point_num(pcd, fix_point_num))
+
+#     return np.stack(pcds).reshape([*B, fix_point_num, -1])
+
 def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
     """
-    Render the gripper point cloud at the given end effector pose.
-    ee_pose has a shpae of (N, 7) where 7 means (x, y, z, qx, qy, qz, qw)
-    is_add_noisy is used to add noise to the point cloud.
+    Render the gripper or sphere point cloud at the given end effector pose.
+    ee_pose: (N,7) array [x,y,z,qx,qy,qz,qw]
+    Returns: (N, fix_point_num, 6) point cloud array
     """
     if model_type == 'gripper':
-        model_pcd = GRIPPER
+        base_pcd = GRIPPER[:, :3]
+        base_color = GRIPPER[:, 3:6]
     elif model_type == 'sphere':
-        model_pcd = SPHERE
+        base_pcd = SPHERE[:, :3]
+        base_color = SPHERE[:, 3:6]
     else:
         raise NotImplementedError(f"model type {model_type} not implemented")
 
-    B = list(ee_pose.shape[:-1])
-        
     ee_pose = ee_pose.reshape(-1, 7)
-    batch_size, ndim = ee_pose.shape
-    pcds = []
-    for i in range(batch_size):
-        gripper_pcd = copy.deepcopy(model_pcd)
-        tran_mat = np.eye(4)
-        tran_mat[:3, 3] = ee_pose[i, :3] 
-        tran_mat[:3, :3] = R.from_quat(ee_pose[i, 3:7]).as_matrix()
-        pcd = apply_se3_pcd_transform(gripper_pcd, tran_mat)
-        pcds.append(populate_point_num(pcd, fix_point_num))
+    batch_pcds = []
+    for pose in ee_pose:
+        rot = R.from_quat(pose[3:7]).as_matrix()
+        transformed_points = (rot @ base_pcd.T).T + pose[:3]
+        batch_pcds.append(np.hstack([transformed_points, base_color]))
 
-    return np.stack(pcds).reshape([*B, fix_point_num, -1])
+    return np.stack(batch_pcds, axis=0)[0]  # shape: (batch, fix_point_num, 6)
 
 def o3d2np(pcd_o3d, num_samples=4412):
     # pcd: (n, 3)
@@ -198,44 +246,43 @@ def o3d2np(pcd_o3d, num_samples=4412):
         pcd_np = populate_point_num(pcd_np, num_samples)
 
     return pcd_np
-
 def filter_point_cloud_by_workspace(pcd, workspace_limits):
     """
-    Filters an Open3D point cloud based on given x and y workspace limits.
+    Efficiently filters an Open3D point cloud to keep only points within workspace_limits.
 
     Args:
-        pcd (open3d.geometry.PointCloud): The input point cloud.
-        x_min (float): Minimum x-coordinate for the workspace.
-        x_max (float): Maximum x-coordinate for the workspace.
-        y_min (float): Minimum y-coordinate for the workspace.
-        y_max (float): Maximum y-coordinate for the workspace.
-        z_min (float): Minimum z-coordinate for the workspace.
-        z_max (float): Maximum z-coordinate for the workspace.
+        pcd (open3d.geometry.PointCloud): Input point cloud.
+        workspace_limits (np.ndarray): (3,2) array [[x_min, x_max], [y_min, y_max], [z_min, z_max]]
 
     Returns:
-        open3d.geometry.PointCloud: The filtered point cloud.
+        open3d.geometry.PointCloud: Filtered point cloud.
     """
-    x_min, x_max, y_min, y_max, z_min, z_max = workspace_limits[0,0], workspace_limits[0,1], \
-        workspace_limits[1,0], workspace_limits[1,1], workspace_limits[2,0], workspace_limits[2,1]
+    # Unpack limits
+    x_min, x_max = workspace_limits[0]
+    y_min, y_max = workspace_limits[1]
+    z_min, z_max = workspace_limits[2]
+
+    # Vectorized boolean mask
+    pts = np.asarray(pcd.points)
+    mask = (
+        (pts[:, 0] >= x_min) & (pts[:, 0] <= x_max) &
+        (pts[:, 1] >= y_min) & (pts[:, 1] <= y_max) &
+        (pts[:, 2] >= z_min) & (pts[:, 2] <= z_max)
+    )
+
+    # Select valid indices using flatnonzero (faster than where)
+    return pcd.select_by_index(np.flatnonzero(mask))
+
+
+
+def random_downsample(pcd, num_samples):
     points = np.asarray(pcd.points)
-
-    # Create a boolean mask for points within the specified x and y ranges
-    x_mask = (points[:, 0] >= x_min) & (points[:, 0] <= x_max) 
-    y_mask = (points[:, 1] >= y_min) & (points[:, 1] <= y_max)
-    z_mask = (points[:, 2] >= z_min) & (points[:, 2] <= z_max)
-
-    # Combine the masks
-    combined_mask = x_mask & y_mask & z_mask
-
-    # Get the indices of the points that satisfy the conditions
-    filtered_indices = np.where(combined_mask)[0]
-
-    # Select these points from the original point cloud
-    filtered_pcd = pcd.select_by_index(filtered_indices)
-
-    return filtered_pcd
-
-
+    colors = np.asarray(pcd.colors)
+    idx = np.random.choice(points.shape[0], num_samples, replace=False)
+    sampled_pcd = o3d.geometry.PointCloud()
+    sampled_pcd.points = o3d.utility.Vector3dVector(points[idx])
+    sampled_pcd.colors = o3d.utility.Vector3dVector(colors[idx])
+    return sampled_pcd
 
 def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_point_num=1024):
     """

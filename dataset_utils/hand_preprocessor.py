@@ -19,7 +19,7 @@ from human_segmentor.util import convert_images_to_video, get_first_frame
 # os.environ["PYOPENGL_PLATFORM"] = "glfw"  # force use of native OpenGL
 import time
 import matplotlib.pyplot as plt
-from hamer_detector.KF_smoothing import smooth_hand_pose_json_KF
+from hamer_detector.hamer_smoothing import smooth_hand_pose_json
 from human_segmentor.util import rename_images_sequentially
 from human_segmentor.sphere_pcd import generate_pcd_sequence
 from vitpose_model import ViTPoseModel
@@ -126,7 +126,10 @@ class HandPreprocessor:
         camera_intrinsics = self.camera_info[f'cam{cam_num}']
         hand_poss = self.detect_hand(hamer_args, cam_num, batch_mode=True)
         if cam_num == 3:
-            hand_poss = smooth_hand_pose_json_KF(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
+            start_tmp= time.time()
+            
+            hand_poss = smooth_hand_pose_json(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
+            print(f"smoothed_hand_pose_json takes {time.time() - start_tmp:.2f} seconds")
             convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
         return hand_poss
         
@@ -205,6 +208,7 @@ class HandPreprocessor:
         """
         Run the entire preprocessing pipeline.
         """
+        total_start = time.time()
         # ----------Prepare paths and directories----------------
         data_path, episode_name = os.path.split(episode_path)
         # Set up directories and file paths for this camera
@@ -227,28 +231,38 @@ class HandPreprocessor:
 
         hamer_args = self.get_hamer_args()
 
+        prep_start = time.time()
         # Prepare temporary images for processing
         img_count = self.prepare()
+        # print(f"Preparation took {time.time() - prep_start:.2f} seconds.")
 
+        hamer_start = time.time()
         # ----------Run HaMeR hand detection----------------
         shortened = False if cam_num == 3 else True
+        print("hammer processing")
         hand_poss = self.get_hamer_poses(hamer_args, cam_num, shortened=shortened)
+        print(f"HaMeR hand detection took {time.time() - hamer_start:.2f} seconds.")
 
+        seg_start = time.time()
         # ----------Run human segmentation using SAM2----------
         self.segment_human(cam_num)
+        print(f"Human segmentation took {time.time() - seg_start:.2f} seconds.")
 
         # Optional: Render spheres in place of hands (currently commented out)
         # if cam_num == 3:
         #     hand_poss = self.render_spheres(hand_poss, cam_num=cam_num)
 
+        clean_start = time.time()
         # Clean up temporary images directory
         self.clean_tmp_images()
+        print(f"Cleanup took {time.time() - clean_start:.2f} seconds.")
 
         # Save hand poses to file 
         if cam_num == self.main_cam_idx:
             np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{self.main_cam_idx}.npy'), hand_poss)
 
-        
+        print(f"Total processing time: {time.time() - total_start:.2f} seconds.")
+
         
 
 # =================== Run all 3 camera views ===================

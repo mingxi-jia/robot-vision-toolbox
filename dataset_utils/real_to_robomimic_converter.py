@@ -25,10 +25,11 @@ import h5py
 import glob
 import json
 import time
+from time import perf_counter
+import torch
 import copy
 import yaml
 import open3d as o3d
-
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
@@ -98,19 +99,29 @@ class RealToRobomimicConverter:
             if os.path.exists(done_indicator):
                 print(f"Episode {episode_name} already processed. Skipping...")
                 continue
-            
-            starting_time = time.time()
+
+            starting_time = perf_counter()
             episode_path = os.path.join(self.real_dataset_path, episode_name)
             for cam_id in [1, 2, 3]:
                 print(f"\n========= Processing Camera {cam_id} =========")
                 hamer.process(episode_path, cam_id)
+                torch.cuda.empty_cache()
+            pcd_gen_start = perf_counter()
             # generate pcd with rendered sphere
             poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False, visualize_coordinate_axis=True)
+            elapsed_segment_false = perf_counter() - pcd_gen_start
             # generate pcd with human in it
+            pcd_gen_start = perf_counter()
             poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis=True)
-            
+            elapsed_segment_true = perf_counter() - pcd_gen_start
+            pcd_gen_start = perf_counter()
+            torch.cuda.empty_cache()
             np.save(os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy"), poses_wrt_world, allow_pickle=True)
-            print(f"Episode {episode_name} processed in {time.time() - starting_time:.2f} seconds.")
+            elapsed_save = perf_counter() - pcd_gen_start
+            print(f"pcd generation (segment=False) takes {elapsed_segment_false:.2f} seconds.")
+            print(f"pcd generation (segment=True) takes {elapsed_segment_true:.2f} seconds.")
+            print(f"pcd saving takes {elapsed_save:.2f} seconds.")
+            print(f"Episode {episode_name} processed in {perf_counter() - starting_time:.2f} seconds.")
 
             with open(os.path.join(self.process_path, episode_name, 'DONE'), "a") as f:
                 f.write("This is a marker file to indicate that the preprocessing is done for this episode.\n")
@@ -287,6 +298,6 @@ class RealToRobomimicConverter:
 if __name__ == "__main__":
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
-    converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71/Desktop/robotool_data/hand_rotation_test", output_robomimic_path="/home/xhe71/Desktop/robotool_data/hand_rotation_test/test_multiview_abs.hdf5")
+    converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71/Desktop/robotool_data/optimization", output_robomimic_path="/home/xhe71/Desktop/robotool_data/optimization/test_multiview_abs.hdf5")
     converter.convert()
     

@@ -14,7 +14,7 @@ from human_segmentor.util import convert_images_to_video, get_first_frame
 # os.environ["PYOPENGL_PLATFORM"] = "glfw"  # force use of native OpenGL
 import time
 import matplotlib.pyplot as plt
-from hamer_detector.KF_smoothing import smooth_hand_pose_json_KF
+from hamer_detector.hamer_smoothing import smooth_hand_pose_json_KF
 from human_segmentor.util import rename_images_sequentially
 SAMPLE_RATE = 1
 start_time = time.time()

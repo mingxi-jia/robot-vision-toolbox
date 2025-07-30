@@ -104,36 +104,41 @@ def annotate_points(image_path):
 
 
 
-def replace_background(image, mask, reference_image, ref_cam = 1):
+def replace_background(image, mask, reference_image, ref_cam=1):
     """
-    Replaces the background of the segmented human image with pixels from the reference image.
-    
-    Arguments:
-    - image: Original input image.
-    - mask: Binary segmentation mask (1 for foreground, 0 for background).
-    - reference_image: Image to take the background from.
-    
+    Replace the background of the segmented human image with pixels from the reference image.
+
+    - image: original input image (HxWx3)
+    - mask: binary segmentation mask (1 for foreground, 0 for background)
+    - reference_image: image to use as background
+    - ref_cam: camera id controlling specific regions to replace
+
     Returns:
-    - Image with replaced background.
+    - result_image: composited image with human preserved and background replaced
     """
-    # Ensure the reference image is the same size as the original image
+    # Ensure mask has same size as the original image to avoid shape mismatches
+    if mask.shape[:2] != image.shape[:2]:
+        mask = cv2.resize(mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+
+    # Resize reference to match image
     reference_resized = cv2.resize(reference_image, (image.shape[1], image.shape[0]))
 
-    # Create the final composited image
-    result_image = image.copy()
-    result_image[mask == 1] = reference_resized[mask == 1]  # Replace background pixels where mask is 0
-    height, width = image.shape[:2]
+    # Create final composite: keep foreground from original, replace background from reference
+    # Foreground pixels (mask==1) remain from the original image, while the background is replaced from the reference.
+    result_image = reference_resized.copy()
+    result_image[mask == 1] = image[mask == 1]
 
+    # Camera-specific patches overwrite parts of the background
+    # The following sections overwrite specific regions of the composite with the reference image
+    height, width = image.shape[:2]
     if ref_cam == 1:
         top_section = height // 6
         result_image[:top_section, :] = reference_resized[:top_section, :]
-        result_image[:, 3 * width // 4:] = reference_resized[:, 3 * width // 4:]  # Right 1/4
-
+        result_image[:, 3 * width // 4:] = reference_resized[:, 3 * width // 4:]
     elif ref_cam == 2:
         top_section = height // 6
         result_image[:top_section, :] = reference_resized[:top_section, :]
-        result_image[:, :width // 3] = reference_resized[:, :width // 3]  # Left 1/3
-
+        result_image[:, :width // 3] = reference_resized[:, :width // 3]
     else:
         top_section = 2 * height // 5
         result_image[:top_section, :] = reference_resized[:top_section, :]
@@ -153,6 +158,7 @@ def replace_depth_background(depth_image, reference_depth_image, ref_cam = 1):
     Returns:
     - Depth image with replaced background.
     """
+    
     # Ensure the reference depth image is the same size as the original depth image
     reference_resized = cv2.resize(reference_depth_image, (depth_image.shape[1], depth_image.shape[0]))
 
@@ -192,6 +198,8 @@ def remove_masked_depth_points(depth_image: np.ndarray, mask: np.ndarray, intrin
         masked_depth (np.ndarray): Depth image with masked regions zeroed out.
         (optional) filtered_points (np.ndarray): Nx3 array of 3D points if intrinsics is given.
     """
+    if mask.shape != depth_image.shape:
+        mask = cv2.resize(mask, (depth_image.shape[1], depth_image.shape[0]), interpolation=cv2.INTER_NEAREST)
     assert depth_image.shape == mask.shape, "Depth and mask must be the same shape"
     kernel = np.ones((7, 7), np.uint8)
     mask = cv2.dilate(mask.astype(np.uint8), kernel, iterations=1)
@@ -208,13 +216,13 @@ def remove_masked_depth_points(depth_image: np.ndarray, mask: np.ndarray, intrin
         x = (u[valid] - cx) * z[valid] / fx
         y = (v[valid] - cy) * z[valid] / fy
         points = np.stack((x, y, z[valid]), axis=1)
-        print("----Removing Depth----")
-        print(f"Retained {points.shape[0]} valid 3D points after masking.")
+        # print("----Removing Depth----")
+        # print(f"Retained {points.shape[0]} valid 3D points after masking.")
         return masked_depth, points
 
     return masked_depth
 
-def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1):
+def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1, resize_scale=0.5):
     # convert all files to jpg first
     if not any(f.lower().endswith(".jpg") for f in os.listdir(source_frames)):
         convert_image_format(source_frames, ".jpg")
@@ -239,7 +247,7 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     for i in selected_indices:
         mask_path = hand_mask_paths[i]
         if not os.path.exists(mask_path):
-            print(f"❌ Mask file not found: {mask_path}, skipping.")
+            print(f"Mask file not found: {mask_path}, skipping.")
             continue
         print(mask_path)
         basename = os.path.basename(mask_path)
@@ -248,20 +256,29 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
         if frame_name in frame_names:
             frame_idx = frame_names.index(frame_name)
         else:
-            print(f"❌ Frame name {frame_name} not found in frame_names, skipping.")
+            print(f"Frame name {frame_name} not found in frame_names, skipping.")
             continue
 
         mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
         if mask is None:
-            print(f"❌ Unable to read mask file: {mask_path}, skipping.")
+            print(f"Unable to read mask file: {mask_path}, skipping.")
             continue
+
+        if resize_scale != 1.0:
+            original_size = (mask.shape[1], mask.shape[0])
+            mask = cv2.resize(mask, (int(original_size[0]*resize_scale), int(original_size[1]*resize_scale)), interpolation=cv2.INTER_NEAREST)
+
         ys, xs = np.where(mask > 127)
         if len(xs) == 0:
-            print(f"❌ No valid mask pixels in: {mask_path}, skipping.")
+            print(f"No valid mask pixels in: {mask_path}, skipping.")
             continue
 
         centroid_x = int(np.median(xs))
         centroid_y = int(np.median(ys))
+
+        # if resize_scale != 1.0:
+        #     centroid_x = int(centroid_x / resize_scale)
+        #     centroid_y = int(centroid_y / resize_scale)
 
         points_with_labels.append({'x': centroid_x, 'y': centroid_y, 'label': 1})
         frame_idx_list.append(frame_idx)
@@ -292,7 +309,12 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     
     for out_frame_idx in range(len(frame_names)):
         frame_path = os.path.join(video_dir, frame_names[out_frame_idx])
-        image = cv2.imread(frame_path)
+        original_image = cv2.imread(frame_path)
+        image = original_image.copy()
+
+        if resize_scale != 1.0:
+            original_size = (image.shape[1], image.shape[0])
+            image = cv2.resize(image, (int(original_size[0]*resize_scale), int(original_size[1]*resize_scale)), interpolation=cv2.INTER_LINEAR)
         
         # if image is None:
         #     continue
@@ -306,6 +328,11 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
             binary_mask = cv2.dilate(binary_mask, kernel, iterations=1)
         else:
             binary_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+
+        if resize_scale != 1.0:
+            binary_mask = cv2.resize(binary_mask,
+                            (original_image.shape[1], original_image.shape[0]),
+                            interpolation=cv2.INTER_NEAREST)
             
         # If debug mode, save overlay with green mask
         if debug:
@@ -317,7 +344,10 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
 
         # Save background replaced version
         if reference_image is not None:
-            replaced = replace_background(image, binary_mask, reference_image, ref_cam=ref_cam)
+            # Before calling replace_background
+            if binary_mask.shape[:2] != image.shape[:2]:
+                binary_mask = cv2.resize(binary_mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            replaced = replace_background(original_image, binary_mask, reference_image, ref_cam=ref_cam)
             final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}.png")
             cv2.imwrite(final_path, replaced)
 
