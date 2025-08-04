@@ -93,6 +93,7 @@ class RealToRobomimicConverter:
         self.preprocess(self.hamer)
 
     def preprocess(self, hamer: Hamer):
+        preprocess_start_time = perf_counter()
         for episode_name in tqdm(self.episode_list, desc="Preprocessing episodes"):
             # done_indicator = os.path.join(self.process_path, episode_name, "DONE")
             done_indicator = os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy")
@@ -125,6 +126,7 @@ class RealToRobomimicConverter:
 
             with open(os.path.join(self.process_path, episode_name, 'DONE'), "a") as f:
                 f.write("This is a marker file to indicate that the preprocessing is done for this episode.\n")
+        print(f"Preprocessing done in {perf_counter() - preprocess_start_time:.2f} seconds.")
 
 
     def process_raw_pcd(self, pcd: np.ndarray):

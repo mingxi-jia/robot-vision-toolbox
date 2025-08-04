@@ -12,7 +12,7 @@ sys.path.append('./')
 from vision_utils.pcd_utils import *
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
 from concurrent.futures import ThreadPoolExecutor
-
+from downsample import replace_fps_with_simple_voxel
 
 frame_cache = {}
 preload_cache = {}
@@ -183,7 +183,7 @@ def save_ply_from_npy(npy_file, ply_file):
     os.remove(npy_file) # Remove the .npy file after conversion
 
 
-def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False):
+def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False, downsample_method = "simple_voxel"):
     """
     Generate a sequence of point clouds from RGB-D images and sphere poses.
     
@@ -242,11 +242,16 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
             combined_pcd,
             WORKSPACE
         )
-        combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
+        if downsample_method == "simple_voxel":
+            # Use simple voxel downsampling
+            combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
+        elif downsample_method == "fps":
+            combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
+        elif downsample_method == "random":
         # Use random_downsample if too many points, else keep as is
-        # if len(combined_pcd.points) > max_point_num:
-        #     combined_pcd = random_downsample(combined_pcd, max_point_num)
-        # end_filter = time.time()
+            if len(combined_pcd.points) > max_point_num:
+                combined_pcd = random_downsample(combined_pcd, max_point_num)
+        end_filter = time.time()
 
         # Add sphere to pcd
         start_sphere = time.time()
@@ -264,13 +269,13 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
 
         end_total = time.time()
 
-        print(f"Frame {frame_idx} processing times:")
-        print(f"  Loading data: {end_load - start_load:.2f}s")
-        print(f"  Assembling PCD: {end_assemble - start_assemble:.2f}s")
-        print(f"  Filtering/Downsampling: {end_filter - start_filter:.2f}s")
-        print(f"  Adding sphere: {end_sphere - start_sphere:.2f}s")
-        print(f"  Saving npy: {end_save - start_save:.2f}s")
-        print(f"  Total: {end_total - start_total:.2f}s")
+        # print(f"Frame {frame_idx} processing times:")
+        # print(f"  Loading data: {end_load - start_load:.2f}s")
+        # print(f"  Assembling PCD: {end_assemble - start_assemble:.2f}s")
+        # print(f"  Filtering/Downsampling: {end_filter - start_filter:.2f}s")
+        # print(f"  Adding sphere: {end_sphere - start_sphere:.2f}s")
+        # print(f"  Saving npy: {end_save - start_save:.2f}s")
+        # print(f"  Total: {end_total - start_total:.2f}s")
 
         return combined_pcd
 
