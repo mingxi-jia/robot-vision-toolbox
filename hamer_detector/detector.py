@@ -304,7 +304,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
             break
 
         img_cv2 = cv2.imread(str(img_path))
-        h, w = img_cv2.shape[:2]
+        assert img_cv2 is not None, f"❌ Failed to read image: {img_path}"
         img_fn = os.path.splitext(os.path.basename(img_path))[0]
         frame_id = img_fn.split('_')[0]
 

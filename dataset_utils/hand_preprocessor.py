@@ -22,6 +22,8 @@ import matplotlib.pyplot as plt
 from hamer_detector.hamer_smoothing import smooth_hand_pose_json
 from human_segmentor.util import rename_images_sequentially
 from human_segmentor.sphere_pcd import generate_pcd_sequence
+
+sys.path.append("submodules/hamer")
 from vitpose_model import ViTPoseModel
 from hamer.utils.renderer import Renderer, cam_crop_to_full
 

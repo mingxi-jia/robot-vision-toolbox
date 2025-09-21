@@ -125,8 +125,8 @@ def replace_background(image, mask, reference_image, ref_cam=1):
 
     # Create final composite: keep foreground from original, replace background from reference
     # Foreground pixels (mask==1) remain from the original image, while the background is replaced from the reference.
-    result_image = reference_resized.copy()
-    result_image[mask == 1] = image[mask == 1]
+    result_image = image.copy()
+    result_image[mask == 1] = reference_resized[mask == 1]
 
     # Camera-specific patches overwrite parts of the background
     # The following sections overwrite specific regions of the composite with the reference image
@@ -222,7 +222,7 @@ def remove_masked_depth_points(depth_image: np.ndarray, mask: np.ndarray, intrin
 
     return masked_depth
 
-def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1, resize_scale=0.5):
+def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder, intrinsics, output_dir, reference_image_path = None, debug = False, ref_cam = 1, resize_scale=1.0):
     # convert all files to jpg first
     if not any(f.lower().endswith(".jpg") for f in os.listdir(source_frames)):
         convert_image_format(source_frames, ".jpg")

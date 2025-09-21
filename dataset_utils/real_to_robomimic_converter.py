@@ -34,7 +34,8 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 from scipy.spatial.transform import Rotation as R
-
+import sys
+sys.path.append("./")
 from vision_utils.pcd_utils import convert_RGBD_to_open3d, o3d2np
 from dataset_utils.hand_preprocessor import HandPreprocessor as Hamer
 from human_segmentor.sphere_pcd import generate_pcd_sequence
@@ -42,6 +43,7 @@ from human_segmentor.sphere_pcd import generate_pcd_sequence
 from vision_utils.pcd_utils import get_extrinsics_matrix, pcd_to_voxel, render_pcd_from_pose
 
 from configs.workspace import WORKSPACE, MAX_POINT_NUM, VOXEL_SIZE
+
 
 def load_camera_info_dict(info_path: str):
     assert info_path.endswith(".yaml"), "Info file should be a yaml file"
@@ -300,6 +302,6 @@ class RealToRobomimicConverter:
 if __name__ == "__main__":
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")
     # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
-    converter = RealToRobomimicConverter(real_dataset_path="/home/xhe71/Desktop/robotool_data/optimization", output_robomimic_path="/home/xhe71/Desktop/robotool_data/optimization/test_multiview_abs.hdf5")
+    converter = RealToRobomimicConverter(real_dataset_path="/media/mingxi/home2/data/real world/human_blockStacking_60", output_robomimic_path="/media/mingxi/home2/data/real world/test_multiview_abs.hdf5")
     converter.convert()
     

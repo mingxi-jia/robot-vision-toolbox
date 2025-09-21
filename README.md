@@ -4,30 +4,44 @@ conda create --name robotool python=3.10
 conda activate robotool
 ```
 
-# 1. real-time video segmentor
+# 1. install real-time video segmentor
 ```
-# install the cuda version torch (tested on cuda 12.2)
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
+# install the cuda version torch (tested on cuda 12.4)
+mamba install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
+pip install mediapipe==0.10.14 pykalman h5py open3d supervision
 
 # install realtime sam
 git clone https://github.com/Gy920/segment-anything-2-real-time.git ./submodules/segment-anything-2-real-time
-cd segment-anything-2-real-time && pip install -e .
-export LD_LIBRARY_PATH=/your/env/lib/python3.10/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH
+cd ./submodules/segment-anything-2-real-time && pip install -e .
+cd checkpoints
+bash bash download_ckpts.sh
+cd ../../..
+#export LD_LIBRARY_PATH=/your_conda_env/lib/python3.10/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH
 # install other necessary packages:
-pip install mediapipe
-pip install pykalman
 pip install git+https://github.com/cansik/mesh-sequence-player.git@1.10.1
 ```
 
-# 2. hamer hand detector
+# 2. install hamer hand detector
+Hamer pipeline needs the video segmentor above.
 ```
 # install hamer
 git clone --recursive https://github.com/geopavlakos/hamer.git ./submodules/hamer
 cd ./submodules/hamer
 pip install -e .[all]
-cd ../..
 pip install -v -e third-party/ViTPose
+bash fetch_demo_data.sh
+cd ../..
+
+pip install numpy==1.26.4 opencv-python==4.11.0.86 opencv-contrib-python==4.11.0.86
 ```
+* need to change one line in hamer
+```
+#change this
+VIT_DIR = os.path.join(ROOT_DIR, "third-party/ViTPose")
+# into
+VIT_DIR = os.path.join(ROOT_DIR, "submodules/hamer/third-party/ViTPose")
+```
+
 Besides these files, you also need to download the MANO model. Please visit the MANO website and register to get access to the downloads section. We only require the right hand model. [MANO_RIGHT.pkl](https://mano.is.tue.mpg.de/) under the _DATA/data/mano folder.
 ```
 # change hamer camera parameter (VERY IMPORTANT)
