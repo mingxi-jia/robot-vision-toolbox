@@ -20,6 +20,7 @@ dataset/
         ...
     ...
 '''
+import argparse
 import os
 import h5py
 import glob
@@ -298,10 +299,25 @@ class RealToRobomimicConverter:
             episode_idx, ep_data_grp.attrs["num_samples"], ep))
             bar.update(1)
         bar.close()
-
+   
 if __name__ == "__main__":
-    # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/hdf5_hand_datasets/test_multiview_abs.hdf5")
-    # converter = RealToRobomimicConverter(real_dataset_path="/home/mingxi/data/realworld/test", output_robomimic_path="/home/mingxi/data/realworld/test_multiview_abs.hdf5")
-    converter = RealToRobomimicConverter(real_dataset_path="/media/mingxi/home2/data/real world/human_blockStacking_60", output_robomimic_path="/media/mingxi/home2/data/real world/test_multiview_abs.hdf5")
+    parser = argparse.ArgumentParser(description="Convert a real dataset to robomimic format.")
+    parser.add_argument(
+        "--real_dataset_path",
+        type=str,
+        required=True,
+        help="Path to the real dataset."
+    )
+    parser.add_argument(
+        "--output_robomimic_path",
+        type=str,
+        required=True,
+        help="Output path for the robomimic HDF5 file."
+    )
+    args = parser.parse_args()
+
+    converter = RealToRobomimicConverter(
+        real_dataset_path=args.real_dataset_path,
+        output_robomimic_path=args.output_robomimic_path
+    )
     converter.convert()
-    

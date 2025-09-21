@@ -48,7 +48,11 @@ Besides these files, you also need to download the MANO model. Please visit the 
 # in ./submodules/hamer/_DATA/hamer_ckpts/model_config.yaml
 [Line 59] FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
 ```
-
+# 3. run the data processor
+You can view the processed frames in /dataset/human_blockStacking_60/output
+```
+python dataset_utils/real_to_robomimic_converter.py --real_dataset_path=/dataset/human_blockStacking_60 --output_robomimic_path=/real world/test_multiview_abs.hdf5
+```
 
 # Pipeline: detect hand and replace with disco ball
 ```
