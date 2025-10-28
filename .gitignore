@@ -23,3 +23,4 @@ hamer_detector/tmp_imgs/list.txt
 list.txt
 human_segmentor/.test.py
 .vscode/launch.json
+.claude/
