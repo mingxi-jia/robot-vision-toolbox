@@ -136,16 +136,19 @@ class HandPreprocessor:
         return hand_poss
         
     def segment_human(self, cam_num):
-        """Segment the human from the background using SAM."""
-        run_sam2_segmentation(self.predictor, 
-                              self.tmp_img_dir, 
-                              self.hamer_out_dir, 
+        """Segment the human from the background using SAM2."""
+        # OPTIMIZATION: Process at 50% resolution for 3-4x speedup
+        resize_scale = 0.5  # 0.5 = 50%, 0.25 = 25% (faster but less accurate)
+        run_sam2_segmentation(self.predictor,
+                              self.tmp_img_dir,
+                              self.hamer_out_dir,
                               self.depth_img_dir,
-                              self.camera_info[f'cam{cam_num}'], 
+                              self.camera_info[f'cam{cam_num}'],
                               self.segmentation_out_dir,
-                              self.background_img, 
-                              self.debug, 
-                              ref_cam=cam_num)
+                              self.background_img,
+                              self.debug,
+                              ref_cam=cam_num,
+                              resize_scale=resize_scale)
         segmented_rgb_dir = os.path.join(self.segmentation_out_dir, "segmented_rgb")
         convert_images_to_video(segmented_rgb_dir, framerate=30 // self.SAMPLE_RATE)
     
@@ -238,32 +241,32 @@ class HandPreprocessor:
         img_count = self.prepare()
         # print(f"Preparation took {time.time() - prep_start:.2f} seconds.")
 
+        # Run hand detection
         hamer_start = time.time()
-        # ----------Run HaMeR hand detection----------------
         shortened = False if cam_num == 3 else True
-        print("hammer processing")
         hand_poss = self.get_hamer_poses(hamer_args, cam_num, shortened=shortened)
-        print(f"HaMeR hand detection took {time.time() - hamer_start:.2f} seconds.")
+        hamer_time = time.time() - hamer_start
 
+        # Run human segmentation using SAM2
         seg_start = time.time()
-        # ----------Run human segmentation using SAM2----------
         self.segment_human(cam_num)
-        print(f"Human segmentation took {time.time() - seg_start:.2f} seconds.")
+        seg_time = time.time() - seg_start
 
-        # Optional: Render spheres in place of hands (currently commented out)
-        # if cam_num == 3:
-        #     hand_poss = self.render_spheres(hand_poss, cam_num=cam_num)
-
-        clean_start = time.time()
         # Clean up temporary images directory
         self.clean_tmp_images()
-        print(f"Cleanup took {time.time() - clean_start:.2f} seconds.")
 
-        # Save hand poses to file 
+        # Save hand poses to file
         if cam_num == self.main_cam_idx:
             np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{self.main_cam_idx}.npy'), hand_poss)
 
-        print(f"Total processing time: {time.time() - total_start:.2f} seconds.")
+        total_time = time.time() - total_start
+
+        # Print concise camera-level timing
+        print(f"     ├─ Detection:  {hamer_time:>6.2f}s")
+        print(f"     ├─ Segment:    {seg_time:>6.2f}s")
+        print(f"     └─ Total:      {total_time:>6.2f}s")
+
+        return hand_poss
 
         
 

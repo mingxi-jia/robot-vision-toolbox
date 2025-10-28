@@ -183,27 +183,42 @@ def save_ply_from_npy(npy_file, ply_file):
     os.remove(npy_file) # Remove the .npy file after conversion
 
 
-def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False, downsample_method = "simple_voxel"):
+def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False, downsample_method = "simple_voxel", generate_both_variants=False):
     """
     Generate a sequence of point clouds from RGB-D images and sphere poses.
-    
+
     Parameters:
         episode_path (str): Path to the episode directory.
         output_path (str): Path where output point clouds and intermediate files are saved.
         cam_info_dict (dict): Dictionary containing camera intrinsics and extrinsics.
-        start_frame (int, optional): Frame index to start from.
-        sphere_cam (int, optional): Camera ID used for sphere pose.
-    
+        sphere_cam (int): Camera ID used for sphere pose.
+        segment (bool): Whether to use segmented images (only used if generate_both_variants=False).
+        visualize_coordinate_axis (bool): Whether to add coordinate axis visualization.
+        downsample_method (str): Method for downsampling ('simple_voxel', 'fps', 'random').
+        generate_both_variants (bool): If True, generates both segmented and non-segmented PCDs in one pass.
+
     Returns:
-        List[o3d.geometry.PointCloud]: List of point cloud objects for each frame.
+        dict: Hand pose dictionary (pose_wrt_world).
     """
     _, episode_name = os.path.split(episode_path)
-    if segment:
-        image_path = os.path.join(output_path, episode_name)
-        rgb_dir, depth_dir, pcd_dir = 'segmented_rgb', 'segmented_depth', 'pcd_no_hand'
+
+    # OPTIMIZATION: Generate both variants in one pass if requested
+    if generate_both_variants:
+        # Set up paths for both variants
+        image_paths = {
+            'pcd': episode_path,  # Original images (with sphere)
+            'pcd_no_hand': os.path.join(output_path, episode_name)  # Segmented images (no hand)
+        }
+        rgb_dirs = {'pcd': 'rgb', 'pcd_no_hand': 'segmented_rgb'}
+        depth_dirs = {'pcd': 'depth', 'pcd_no_hand': 'segmented_depth'}
     else:
-        image_path = episode_path
-        rgb_dir, depth_dir, pcd_dir = 'rgb', 'depth', 'pcd'
+        # Single variant generation (backward compatibility)
+        if segment:
+            image_path = os.path.join(output_path, episode_name)
+            rgb_dir, depth_dir, pcd_dir = 'segmented_rgb', 'segmented_depth', 'pcd_no_hand'
+        else:
+            image_path = episode_path
+            rgb_dir, depth_dir, pcd_dir = 'rgb', 'depth', 'pcd'
 
     main_cam_name = f'cam{sphere_cam}'
     cam_views = [1, 2, 3]
@@ -214,70 +229,96 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     pose_path = os.path.join(output_path, episode_name, f'hand_poses_wrt_cam{sphere_cam}.npy')
     hand_pose = np.load(pose_path, allow_pickle=True)[()]
     pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
-    
+
     max_point_num = MAX_POINT_NUM
 
-    save_dir = os.path.join(output_path, episode_name, pcd_dir)
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    # Create save directories
+    if generate_both_variants:
+        save_dirs = {
+            'pcd': os.path.join(output_path, episode_name, 'pcd'),
+            'pcd_no_hand': os.path.join(output_path, episode_name, 'pcd_no_hand')
+        }
+        for dir_path in save_dirs.values():
+            os.makedirs(dir_path, exist_ok=True)
+    else:
+        save_dir = os.path.join(output_path, episode_name, pcd_dir)
+        os.makedirs(save_dir, exist_ok=True)
 
     frame_indices = sorted(pose_wrt_world.keys())
-    preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir)
+
+    # Preload frames for both variants if needed
+    if generate_both_variants:
+        for variant_key in ['pcd', 'pcd_no_hand']:
+            preload_all_frames(image_paths[variant_key], cam_views, frame_indices,
+                             rgb_dirs[variant_key], depth_dirs[variant_key])
+    else:
+        preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir)
 
     def process_frame(frame_idx):
-        start_total = time.time()
-        # Load camera data
-        start_load = time.time()
-        all_points, all_colors = load_camera_data(image_path, [f'cam{v}' for v in cam_views], frame_idx, rgb_dir, depth_dir, cam_info_dict)
-        end_load = time.time()
+        # OPTIMIZATION: Process both variants in one pass
+        if generate_both_variants:
+            for variant_key in ['pcd', 'pcd_no_hand']:
+                # Load camera data for this variant
+                all_points, all_colors = load_camera_data(
+                    image_paths[variant_key],
+                    [f'cam{v}' for v in cam_views],
+                    frame_idx,
+                    rgb_dirs[variant_key],
+                    depth_dirs[variant_key],
+                    cam_info_dict
+                )
 
-        # Assemble combined pcd
-        start_assemble = time.time()
-        combined_pcd = assemble_combined_pcd(all_points, all_colors)
-        end_assemble = time.time()
+                # Assemble combined pcd
+                combined_pcd = assemble_combined_pcd(all_points, all_colors)
 
-        # Filter and downsample
-        start_filter = time.time()
-        combined_pcd = filter_point_cloud_by_workspace(
-            combined_pcd,
-            WORKSPACE
-        )
-        if downsample_method == "simple_voxel":
-            # Use simple voxel downsampling
-            combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
-        elif downsample_method == "fps":
-            combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
-        elif downsample_method == "random":
-        # Use random_downsample if too many points, else keep as is
-            if len(combined_pcd.points) > max_point_num:
-                combined_pcd = random_downsample(combined_pcd, max_point_num)
-        end_filter = time.time()
+                # Filter and downsample
+                combined_pcd = filter_point_cloud_by_workspace(combined_pcd, WORKSPACE)
 
-        # Add sphere to pcd
-        start_sphere = time.time()
-        pose = pose_wrt_world[frame_idx]
-        combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
-        end_sphere = time.time()
+                if downsample_method == "simple_voxel":
+                    combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
+                elif downsample_method == "fps":
+                    combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
+                elif downsample_method == "random":
+                    if len(combined_pcd.points) > max_point_num:
+                        combined_pcd = random_downsample(combined_pcd, max_point_num)
 
-        # Save npy file
-        start_save = time.time()
-        npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
-        points_np = np.asarray(combined_pcd.points)
-        colors_np = np.asarray(combined_pcd.colors)
-        np.save(npy_file, np.hstack([points_np, colors_np]))
-        end_save = time.time()
+                # Add sphere to pcd
+                pose = pose_wrt_world[frame_idx]
+                combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
 
-        end_total = time.time()
+                # Save npy file to appropriate directory
+                npy_file = os.path.join(save_dirs[variant_key], f"{frame_idx}.npy")
+                points_np = np.asarray(combined_pcd.points)
+                colors_np = np.asarray(combined_pcd.colors)
+                np.save(npy_file, np.hstack([points_np, colors_np]))
 
-        # print(f"Frame {frame_idx} processing times:")
-        # print(f"  Loading data: {end_load - start_load:.2f}s")
-        # print(f"  Assembling PCD: {end_assemble - start_assemble:.2f}s")
-        # print(f"  Filtering/Downsampling: {end_filter - start_filter:.2f}s")
-        # print(f"  Adding sphere: {end_sphere - start_sphere:.2f}s")
-        # print(f"  Saving npy: {end_save - start_save:.2f}s")
-        # print(f"  Total: {end_total - start_total:.2f}s")
+            return None  # No need to return pcd when processing both
 
-        return combined_pcd
+        else:
+            # Original single-variant processing (backward compatibility)
+            all_points, all_colors = load_camera_data(image_path, [f'cam{v}' for v in cam_views], frame_idx, rgb_dir, depth_dir, cam_info_dict)
+
+            combined_pcd = assemble_combined_pcd(all_points, all_colors)
+
+            combined_pcd = filter_point_cloud_by_workspace(combined_pcd, WORKSPACE)
+
+            if downsample_method == "simple_voxel":
+                combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
+            elif downsample_method == "fps":
+                combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
+            elif downsample_method == "random":
+                if len(combined_pcd.points) > max_point_num:
+                    combined_pcd = random_downsample(combined_pcd, max_point_num)
+
+            pose = pose_wrt_world[frame_idx]
+            combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
+
+            npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
+            points_np = np.asarray(combined_pcd.points)
+            colors_np = np.asarray(combined_pcd.colors)
+            np.save(npy_file, np.hstack([points_np, colors_np]))
+
+            return combined_pcd
 
     print(f"Generating point cloud sequence from episode: {episode_path} with {len(pose_wrt_world.keys())} frames")
     frame_sequence = []

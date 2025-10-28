@@ -3,6 +3,9 @@ import re
 import subprocess
 import cv2
 
+# Global verbosity flag - set to False to suppress non-essential prints
+VERBOSE = False
+
 def convert_images_to_video(image_folder: str, framerate: int = 24):
     """
     Converts a folder of images into a video using OpenCV's VideoWriter.
@@ -44,7 +47,8 @@ def convert_images_to_video(image_folder: str, framerate: int = 24):
         video_writer.write(image)
 
     video_writer.release()
-    print(f"✅ Saved video to {output_path}")
+    if VERBOSE:
+        print(f"✅ Saved video to {output_path}")
 
 def get_first_frame(video_path, output_path):
     cap = cv2.VideoCapture(video_path)
@@ -72,7 +76,8 @@ def rename_images_sequentially(folder_path: str, ext: str = ".png"):
         old_path = os.path.join(folder_path, filename)
         new_path = os.path.join(folder_path, new_name)
         os.rename(old_path, new_path)
-    print(f"✅ Renamed {len(files)} files to sequential names with extension {ext}")
+    if VERBOSE:
+        print(f"✅ Renamed {len(files)} files to sequential names with extension {ext}")
 
 
 def convert_image_format(folder_path: str, target_ext: str = ".jpg"):
@@ -93,4 +98,5 @@ def convert_image_format(folder_path: str, target_ext: str = ".jpg"):
         base = os.path.splitext(filename)[0]
         dst_path = os.path.join(folder_path, f"{base}{target_ext}")
         cv2.imwrite(dst_path, image)
-    print(f"✅ Converted {len(files)} files from {source_ext} to {target_ext}")
+    if VERBOSE:
+        print(f"✅ Converted {len(files)} files from {source_ext} to {target_ext}")

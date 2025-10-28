@@ -92,7 +92,9 @@ class RealToRobomimicConverter:
         self.workspace = WORKSPACE
 
 
-        print(f"Extracting actions from real dataset using HAMER...")
+        print(f"\n{'='*70}")
+        print(f"🚀 STARTING REAL-TO-ROBOMIMIC CONVERSION PIPELINE")
+        print(f"{'='*70}\n")
         self.preprocess(self.hamer)
 
     def preprocess(self, hamer: Hamer):
@@ -101,35 +103,69 @@ class RealToRobomimicConverter:
             # done_indicator = os.path.join(self.process_path, episode_name, "DONE")
             done_indicator = os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy")
             if os.path.exists(done_indicator):
-                print(f"Episode {episode_name} already processed. Skipping...")
+                print(f"✅ Episode {episode_name} already processed. Skipping...")
                 continue
 
             starting_time = perf_counter()
             episode_path = os.path.join(self.real_dataset_path, episode_name)
+            cam_times = {}
+
+            print(f"\n{'='*70}")
+            print(f"⏱️  EPISODE: {episode_name}")
+            print(f"{'='*70}")
+
+            # Track camera preprocessing times
+            camera_start = perf_counter()
             for cam_id in [1, 2, 3]:
-                print(f"\n========= Processing Camera {cam_id} =========")
+                cam_id_start = perf_counter()
+                print(f"\n  📷 Camera {cam_id}")
                 hamer.process(episode_path, cam_id)
+                cam_times[f'cam{cam_id}'] = perf_counter() - cam_id_start
                 torch.cuda.empty_cache()
+
+            total_camera_time = perf_counter() - camera_start
+            # PCD Generation
+            print(f"\n  🔷 Generating Point Clouds (both variants)...")
             pcd_gen_start = perf_counter()
-            # generate pcd with rendered sphere
-            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=False, visualize_coordinate_axis=True)
-            elapsed_segment_false = perf_counter() - pcd_gen_start
-            # generate pcd with human in it
-            pcd_gen_start = perf_counter()
-            poses_wrt_world = generate_pcd_sequence(episode_path, self.hamer.process_path, self.info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis=True)
-            elapsed_segment_true = perf_counter() - pcd_gen_start
-            pcd_gen_start = perf_counter()
+            poses_wrt_world = generate_pcd_sequence(
+                episode_path,
+                self.hamer.process_path,
+                self.info_dict,
+                sphere_cam=3,
+                visualize_coordinate_axis=True,
+                generate_both_variants=True
+            )
+            elapsed_pcd_generation = perf_counter() - pcd_gen_start
+
+            # Save poses
+            pcd_save_start = perf_counter()
             torch.cuda.empty_cache()
             np.save(os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy"), poses_wrt_world, allow_pickle=True)
-            elapsed_save = perf_counter() - pcd_gen_start
-            print(f"pcd generation (segment=False) takes {elapsed_segment_false:.2f} seconds.")
-            print(f"pcd generation (segment=True) takes {elapsed_segment_true:.2f} seconds.")
-            print(f"pcd saving takes {elapsed_save:.2f} seconds.")
-            print(f"Episode {episode_name} processed in {perf_counter() - starting_time:.2f} seconds.")
+            elapsed_save = perf_counter() - pcd_save_start
+            episode_elapsed = perf_counter() - starting_time
+
+            # Print hierarchical timing breakdown
+            print(f"\n  {'─'*66}")
+            print(f"  ⏱️  TIMING BREAKDOWN:")
+            print(f"  {'─'*66}")
+            print(f"  📷 Camera Processing (all 3 cams): {total_camera_time:>8.2f}s")
+            for cam_id in [1, 2, 3]:
+                if f'cam{cam_id}' in cam_times:
+                    print(f"     └─ Camera {cam_id}:               {cam_times[f'cam{cam_id}']:>8.2f}s")
+            print(f"  🔷 PCD Generation (dual-variant):  {elapsed_pcd_generation:>8.2f}s")
+            print(f"  💾 Pose Saving:                    {elapsed_save:>8.2f}s")
+            print(f"  {'─'*66}")
+            print(f"  ⏱️  TOTAL EPISODE TIME:             {episode_elapsed:>8.2f}s ({episode_elapsed/60:.1f} min)")
+            print(f"  {'='*66}\n")
 
             with open(os.path.join(self.process_path, episode_name, 'DONE'), "a") as f:
                 f.write("This is a marker file to indicate that the preprocessing is done for this episode.\n")
-        print(f"Preprocessing done in {perf_counter() - preprocess_start_time:.2f} seconds.")
+
+        total_time = perf_counter() - preprocess_start_time
+        print(f"\n{'='*70}")
+        print(f"✅ ALL EPISODES PROCESSED")
+        print(f"⏱️  Total Time: {total_time:.2f}s ({total_time/60:.1f} minutes)")
+        print(f"{'='*70}\n")
 
 
     def process_raw_pcd(self, pcd: np.ndarray):
