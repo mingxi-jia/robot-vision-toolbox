@@ -5,10 +5,10 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
-from .utils import load_camera_info_dict
-from .point_cloud_processor import PointCloudProcessor
-from .preprocessing import Preprocessor
-from .trajectory_loader import TrajectoryLoader
+from pipeline.utils import load_camera_info_dict
+from pipeline.point_cloud_processor import PointCloudProcessor
+from pipeline.preprocessing import Preprocessor
+from pipeline.trajectory_loader import TrajectoryLoader
 
 
 class RealToRobomimicConverter:

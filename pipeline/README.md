@@ -18,7 +18,7 @@ refactor/
 ## Usage
 
 ```bash
-python refactor/main.py \
+python pipeline/main.py \
     --real_dataset_path /path/to/dataset \
     --output_robomimic_path /path/to/output.hdf5
 ```

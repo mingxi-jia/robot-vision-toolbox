@@ -4,7 +4,7 @@ import argparse
 import sys
 sys.path.append("./")
 
-from converter import RealToRobomimicConverter
+from pipeline import RealToRobomimicConverter
 
 
 def main():

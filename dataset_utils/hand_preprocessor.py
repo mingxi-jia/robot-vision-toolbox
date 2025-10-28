@@ -48,7 +48,7 @@ class HandPreprocessor:
     def __init__(self, dataset_path: str, main_cam_idx: int = 3):
 
         # Download and load checkpoints
-        download_models(CACHE_DIR_HAMER)
+        # download_models(CACHE_DIR_HAMER)
         model, model_cfg = load_hamer(DEFAULT_CHECKPOINT)
         # Setup HaMeR model
         if torch.cuda.is_available():

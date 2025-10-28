@@ -5,7 +5,7 @@ import numpy as np
 import open3d as o3d
 from PIL import Image
 from vision_utils.pcd_utils import o3d2np, pcd_to_voxel
-from .utils import convert_state_to_action
+from pipeline.utils import convert_state_to_action
 
 
 class TrajectoryLoader:
