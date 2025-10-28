@@ -35,8 +35,6 @@ from human_segmentor.util import convert_image_format
 from pathlib import Path
 
 
-
-
 def show_mask(mask, ax, obj_id=None, random_color=False):
     if random_color:
         color = np.concatenate([np.random.random(3), np.array([0.6])], axis=0)
@@ -236,13 +234,43 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
         if os.path.splitext(p)[-1].lower() in [".jpg", ".jpeg"]
     ], key=lambda p: str(os.path.splitext(p)[0]))
 
-    inference_state = predictor.init_state(video_path=video_dir)
+    # OPTIMIZATION: Create resized frames for SAM2 if resize_scale != 1.0
+    if resize_scale != 1.0:
+        resized_video_dir = os.path.join(output_dir, '_sam2_resized_frames_tmp')
+        os.makedirs(resized_video_dir, exist_ok=True)
+
+        print(f"Resizing frames to {resize_scale*100:.0f}% resolution for SAM2 processing...")
+        for frame_name in frame_names:
+            src_path = os.path.join(video_dir, frame_name)
+            dst_path = os.path.join(resized_video_dir, frame_name)
+
+            # Only resize if not already done
+            if not os.path.exists(dst_path):
+                img = cv2.imread(src_path)
+                if img is not None:
+                    h, w = img.shape[:2]
+                    resized_img = cv2.resize(img, (int(w * resize_scale), int(h * resize_scale)),
+                                            interpolation=cv2.INTER_LINEAR)
+                    cv2.imwrite(dst_path, resized_img)
+
+        # SAM2 loads from resized frames
+        sam2_video_dir = resized_video_dir
+    else:
+        sam2_video_dir = video_dir
+
+    inference_state = predictor.init_state(video_path=sam2_video_dir)
     predictor.reset_state(inference_state)
 
     points_with_labels = []
     frame_idx_list = []
 
-    selected_indices = np.linspace(0, len(hand_mask_paths)-1, num=min(len(hand_mask_paths),3), dtype=int) #TODO: why
+    # Create debug directory for prompt visualization
+    if debug:
+        debug_prompts_dir = os.path.join(output_dir, 'debug_sam2_prompts')
+        os.makedirs(debug_prompts_dir, exist_ok=True)
+
+    # select up to 3 hand masks evenly spaced
+    selected_indices = np.linspace(0, len(hand_mask_paths)-1, num=min(len(hand_mask_paths),1), dtype=int)
     print(selected_indices)
     for i in selected_indices:
         mask_path = hand_mask_paths[i]
@@ -276,12 +304,47 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
         centroid_x = int(np.median(xs))
         centroid_y = int(np.median(ys))
 
-        # if resize_scale != 1.0:
-        #     centroid_x = int(centroid_x / resize_scale)
-        #     centroid_y = int(centroid_y / resize_scale)
+        # Keep coordinates at scaled resolution (SAM2 will process scaled frames)
+        # Do NOT scale back - SAM2 processes at resize_scale resolution
 
         points_with_labels.append({'x': centroid_x, 'y': centroid_y, 'label': 1})
         frame_idx_list.append(frame_idx)
+
+        # Debug: visualize selected frame with prompt point
+        if debug:
+            frame_path = os.path.join(video_dir, frame_name)
+            frame_img = cv2.imread(frame_path)
+            if frame_img is not None:
+                # Work at full resolution for accurate visualization
+                full_res_height, full_res_width = frame_img.shape[:2]
+
+                # Create mask overlay at full resolution
+                if resize_scale != 1.0:
+                    # Upscale mask back to full resolution for visualization
+                    mask_fullres = cv2.resize(mask, (full_res_width, full_res_height), interpolation=cv2.INTER_NEAREST)
+                else:
+                    mask_fullres = mask
+
+                # Draw hand mask overlay (green)
+                mask_overlay = frame_img.copy()
+                mask_overlay[mask_fullres > 127] = [0, 255, 0]
+                frame_img = cv2.addWeighted(frame_img, 0.6, mask_overlay, 0.4, 0)
+
+                # Draw centroid point (red circle with yellow center) - already scaled to full res
+                cv2.circle(frame_img, (centroid_x, centroid_y), 10, (0, 0, 255), -1)  # Red filled
+                cv2.circle(frame_img, (centroid_x, centroid_y), 5, (0, 255, 255), -1)  # Yellow center
+                cv2.circle(frame_img, (centroid_x, centroid_y), 10, (255, 255, 255), 2)  # White border
+
+                # Add text label
+                text = f"Frame {frame_idx} - Point ({centroid_x}, {centroid_y}) [FULL RES]"
+                cv2.putText(frame_img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame_img, f"Original: {full_res_width}x{full_res_height}, Scaled {resize_scale}x", (10, 60),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+
+                # Save debug image
+                debug_path = os.path.join(debug_prompts_dir, f"prompt_{frame_idx:06d}.png")
+                cv2.imwrite(debug_path, frame_img)
+                print(f"  💾 Saved prompt debug image: {debug_path}")
 
     for point_entry, frame_idx in zip(points_with_labels, frame_idx_list):
         points = np.array([[point_entry['x'], point_entry['y']]], dtype=np.float32)
@@ -308,45 +371,42 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
     os.makedirs(depth_output_folder, exist_ok=True)
     
     for out_frame_idx in range(len(frame_names)):
+        # Load original full-resolution frame
         frame_path = os.path.join(video_dir, frame_names[out_frame_idx])
         original_image = cv2.imread(frame_path)
-        image = original_image.copy()
-
-        if resize_scale != 1.0:
-            original_size = (image.shape[1], image.shape[0])
-            image = cv2.resize(image, (int(original_size[0]*resize_scale), int(original_size[1]*resize_scale)), interpolation=cv2.INTER_LINEAR)
-        
-        # if image is None:
-        #     continue
 
         if out_frame_idx in video_segments:
-            # Get the mask of the first segmented object(assume only 1) for the current frame
+            # Get the mask from SAM2 (at scaled resolution)
             out_mask = next(iter(video_segments[out_frame_idx].values()))
             binary_mask = out_mask.astype(np.uint8)
             # ➕ Dilate the mask to add a 1-pixel contour
             kernel = np.ones((3, 3), np.uint8)
             binary_mask = cv2.dilate(binary_mask, kernel, iterations=1)
         else:
-            binary_mask = np.zeros((image.shape[0], image.shape[1]), dtype=np.uint8)
+            # Create empty mask at SAM2's output resolution
+            if resize_scale != 1.0:
+                h, w = original_image.shape[:2]
+                binary_mask = np.zeros((int(h * resize_scale), int(w * resize_scale)), dtype=np.uint8)
+            else:
+                binary_mask = np.zeros((original_image.shape[0], original_image.shape[1]), dtype=np.uint8)
 
+        # Upscale mask to original resolution if needed
         if resize_scale != 1.0:
             binary_mask = cv2.resize(binary_mask,
                             (original_image.shape[1], original_image.shape[0]),
                             interpolation=cv2.INTER_NEAREST)
-            
+
         # If debug mode, save overlay with green mask
         if debug:
-            colored_mask = np.zeros_like(image, dtype=np.uint8)
+            colored_mask = np.zeros_like(original_image, dtype=np.uint8)
             colored_mask[binary_mask == 1] = (0, 255, 0)
-            overlay_image = cv2.addWeighted(image, 0.5, colored_mask, 0.5, 0)
+            overlay_image = cv2.addWeighted(original_image, 0.5, colored_mask, 0.5, 0)
             debug_path = os.path.join(color_output_folder, f"[debug]{out_frame_idx:06d}_segmented[debug].png")
             cv2.imwrite(debug_path, overlay_image)
 
         # Save background replaced version
         if reference_image is not None:
-            # Before calling replace_background
-            if binary_mask.shape[:2] != image.shape[:2]:
-                binary_mask = cv2.resize(binary_mask, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
+            # Mask is already at original_image resolution after upscaling
             replaced = replace_background(original_image, binary_mask, reference_image, ref_cam=ref_cam)
             final_path = os.path.join(color_output_folder, f"{out_frame_idx:06d}.png")
             cv2.imwrite(final_path, replaced)
@@ -369,7 +429,14 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
                 depth_colormap = cv2.applyColorMap(depth_visual, cv2.COLORMAP_JET)
                 vis_path = os.path.join(depth_output_folder, f"{out_frame_idx:06d}_depth_vis.png")
                 cv2.imwrite(vis_path, depth_colormap)
-    
+
+    # Cleanup temporary resized frames directory
+    if resize_scale != 1.0:
+        import shutil
+        if os.path.exists(resized_video_dir):
+            shutil.rmtree(resized_video_dir)
+            print(f"Cleaned up temporary resized frames directory")
+
     convert_image_format(source_frames, ".png")
 
 # if __name__ == "__main__":

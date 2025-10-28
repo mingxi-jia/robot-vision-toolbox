@@ -130,7 +130,7 @@ class HandPreprocessor:
         if cam_num == 3:
             start_tmp= time.time()
             
-            hand_poss = smooth_hand_pose_json(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
+            # hand_poss = smooth_hand_pose_json(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
             print(f"smoothed_hand_pose_json takes {time.time() - start_tmp:.2f} seconds")
             convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
         return hand_poss

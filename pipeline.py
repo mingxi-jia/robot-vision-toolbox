@@ -108,8 +108,8 @@ def main(video_path, tmp_img_dir, segmentation_out_dir, hamer_out_dir, sphere_ou
     hamer_end_time = time.time()
     convert_images_to_video(hamer_out_dir, framerate=30//SAMPLE_RATE)
     # step 2.5 Smooth centroid data
-    smooth_hand_pose_json_KF(os.path.join(hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate = SAMPLE_RATE)
-    print("saved smoothed KF")
+    # smooth_hand_pose_json_KF(os.path.join(hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate = SAMPLE_RATE)
+    # print("saved smoothed KF")
     
     print("🔹 Step 3: Segmenting and removing human from video...")
     seg_start_time = time.time()

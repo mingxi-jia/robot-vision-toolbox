@@ -80,6 +80,12 @@ pipeline.py | [line 18] | SAMPLE_RATE = 3 by default
 human_pose_segmentor_mp_sam.py | [line 281] | top 2/5 is cropped
 ```
 
+```
+# side side note: convert npy to ply for output
+python scripts/convert_npy_to_ply.py --output_path OUTPUT_PATH 
+# (add --render_video flag if you want to save videos)
+```
+
 ## Example: intrinsics json
 {
     "width": 640,

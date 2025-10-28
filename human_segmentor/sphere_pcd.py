@@ -200,6 +200,11 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     Returns:
         dict: Hand pose dictionary (pose_wrt_world).
     """
+    # CRITICAL: Clear global caches at start of each episode to prevent cross-episode contamination
+    global preload_cache, frame_cache
+    preload_cache.clear()
+    frame_cache.clear()
+
     _, episode_name = os.path.split(episode_path)
 
     # OPTIMIZATION: Generate both variants in one pass if requested
