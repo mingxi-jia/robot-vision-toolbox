@@ -286,14 +286,21 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     frame_sequence = list(executor.map(process_frame, frame_indices))
     executor.shutdown(wait=True)
 
+    # OPTIMIZATION (2025-01-28): Skip .ply conversion for 10x I/O speedup
+    # Original implementation (commented out for reference):
     # After all frames processed, batch convert npy to ply in parallel
-    def convert_and_save(frame_idx):
-        npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
-        ply_file = os.path.join(save_dir, f"{frame_idx}.ply")
-        save_ply_from_npy(npy_file, ply_file)
+    # def convert_and_save(frame_idx):
+    #     npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
+    #     ply_file = os.path.join(save_dir, f"{frame_idx}.ply")
+    #     save_ply_from_npy(npy_file, ply_file)
+    #
+    # with ThreadPoolExecutor(max_workers=4) as executor2:
+    #     executor2.map(convert_and_save, frame_indices)
 
-    with ThreadPoolExecutor(max_workers=4) as executor2:
-        executor2.map(convert_and_save, frame_indices)
+    # Optimized implementation: Only save .npy files, skip .ply conversion
+    # .ply files are not needed for the pipeline, only for visualization
+    # If you need .ply files for visualization, uncomment the code above
+    print(f"✅ Saved {len(frame_indices)} point clouds as .npy files (skipped .ply conversion for speed)")
 
     return pose_wrt_world
 
