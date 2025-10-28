@@ -8,13 +8,14 @@ conda activate robotool
 ```
 # install the cuda version torch (tested on cuda 12.4)
 mamba install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
-pip install mediapipe==0.10.14 pykalman h5py open3d supervision
+pip install mediapipe==0.10.14 pykalman h5py open3d supervision h5py supervision pykalman
 
 # install realtime sam
 git clone https://github.com/Gy920/segment-anything-2-real-time.git ./submodules/segment-anything-2-real-time
-cd ./submodules/segment-anything-2-real-time && pip install -e .
+cd ./submodules/segment-anything-2-real-time && pip install -e . --no-deps
+python setup.py build_ext --inplace
 cd checkpoints
-bash bash download_ckpts.sh
+bash download_ckpts.sh
 cd ../../..
 #export LD_LIBRARY_PATH=/your_conda_env/lib/python3.10/site-packages/nvidia/nvjitlink/lib:$LD_LIBRARY_PATH
 # install other necessary packages:
@@ -34,9 +35,9 @@ cd ../..
 
 pip install numpy==1.26.4 opencv-python==4.11.0.86 opencv-contrib-python==4.11.0.86
 ```
-* need to change one line in hamer
+* need to change one line in hamer vitpose_model.py
 ```
-#change this
+#change this 
 VIT_DIR = os.path.join(ROOT_DIR, "third-party/ViTPose")
 # into
 VIT_DIR = os.path.join(ROOT_DIR, "submodules/hamer/third-party/ViTPose")

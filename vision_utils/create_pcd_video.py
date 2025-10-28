@@ -14,7 +14,7 @@ import numpy as np
 # --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- --- ---
 
 # Folder containing your sequence of .ply files
-INPUT_FOLDER = "/home/mingxi/data/realworld/test/output/episode_0/pcd_no_hand"
+INPUT_FOLDER = "/home/mingxi/data/realworld/test/output/episode_20250703_125651_170/pcd"
 
 # Path for the output video file
 OUTPUT_VIDEO_PATH = "/home/mingxi/data/realworld/b.mp4"
