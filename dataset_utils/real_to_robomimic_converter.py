@@ -124,6 +124,14 @@ class RealToRobomimicConverter:
                 torch.cuda.empty_cache()
 
             total_camera_time = perf_counter() - camera_start
+
+            # Check if main camera detected hands - if not, skip episode
+            hand_pose_file = os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{3}.npy')
+            if not os.path.exists(hand_pose_file):
+                print(f"\n⚠️  Skipping episode {episode_name} - no hands detected on main camera (cam3)")
+                print(f"{'='*70}\n")
+                continue  # Skip to next episode
+
             # PCD Generation
             print(f"\n  🔷 Generating Point Clouds (both variants)...")
             pcd_gen_start = perf_counter()

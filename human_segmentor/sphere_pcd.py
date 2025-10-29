@@ -49,6 +49,7 @@ def convert_hamer_pose_to_extrinsic(hand_data, extrinsics):
 def apply_alignment_rotation(pose, yaml_path='./configs/hamer_alignment_matrix.yaml'):
     """
     Apply saved alignment rotation (as quaternion) from YAML to a given pose.
+    Also applies Z-flip transformation to match Z-down coordinate convention.
     Assumes pose is in [x, y, z, qx, qy, qz, qw] format.
 
     Returns:
@@ -57,32 +58,47 @@ def apply_alignment_rotation(pose, yaml_path='./configs/hamer_alignment_matrix.y
     # Load alignment config
     with open(yaml_path, 'r') as f:
         alignment_config = yaml.safe_load(f)
-    
+
     if 'quat_transform' not in alignment_config:
         raise KeyError("quat_transform not found in the YAML config.")
-    
+
     # Extract rotation matrix from quaternion
     align_quat = alignment_config['quat_transform']
     R_align = R.from_quat(align_quat).as_matrix()
-    
+
+    # Mirror transformation to flip Y-axis (inverts Y rotation direction)
+    R_mirror_y = np.array([
+        [ 1,  0,  0],
+        [ 0, -1,  0],
+        [ 0,  0,  1]
+    ])
+
     # Extract input pose rotation and translation
     t = np.array(pose[:3])
     R_pose = R.from_quat(pose[3:]).as_matrix()
 
-    # Apply rotation to rotation
-    R_aligned =  R_pose @ R_align
+    # Apply Y-mirror to flip Y-axis rotation, then apply alignment
+    R_aligned = R_mirror_y @ R_pose @ R_mirror_y @ R_align
 
     # Reconstruct quaternion from aligned rotation
     quat_aligned = R.from_matrix(R_aligned).as_quat()
     return np.concatenate([t, quat_aligned])
 
 
-def preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir):
+def preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir, variant_key='default'):
+    """
+    Preload frames into cache with variant-specific keys to avoid overwrites.
+
+    Args:
+        variant_key: String identifier for this variant (e.g., 'pcd', 'pcd_no_hand')
+    """
     global preload_cache
     start_time = time.time()
     # print(f"Preloading all frames for cameras {cam_views} and frames {frame_indices}...")
     for cam_name in [f'cam{v}' for v in cam_views]:
-        preload_cache[cam_name] = {}
+        # Use variant-specific cache key to avoid overwriting
+        cache_key = f"{cam_name}_{variant_key}"
+        preload_cache[cache_key] = {}
         for frame_idx in frame_indices:
             rgb_path = os.path.join(image_path, cam_name, rgb_dir, f'{frame_idx}.png')
             depth_path = os.path.join(image_path, cam_name, depth_dir, f'{frame_idx}.npy')
@@ -90,16 +106,26 @@ def preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir)
                 raise FileNotFoundError(f"Missing rgb or depth file for {cam_name} frame {frame_idx}")
             rgb = np.asarray(Image.open(rgb_path).convert('RGB'))
             depth = np.load(depth_path) / 1000.0
-            preload_cache[cam_name][frame_idx] = (rgb, depth)
+            preload_cache[cache_key][frame_idx] = (rgb, depth)
     end_time = time.time()
     # print(f"Preloading completed in {end_time - start_time:.2f} seconds.")
 
 
-def load_single_camera_view(image_path, cam_name, frame_idx, rgb_dir, depth_dir, intrinsics, extrinsics):
+def load_single_camera_view(image_path, cam_name, frame_idx, rgb_dir, depth_dir, intrinsics, extrinsics, variant_key='default'):
+    """
+    Load a single camera view with variant-specific caching.
+
+    Args:
+        variant_key: String identifier matching the preload variant key
+    """
     global preload_cache
     decode_start = time.time()
-    if cam_name in preload_cache and frame_idx in preload_cache[cam_name]:
-        rgb, depth = preload_cache[cam_name][frame_idx]
+
+    # Use variant-specific cache key
+    cache_key = f"{cam_name}_{variant_key}"
+
+    if cache_key in preload_cache and frame_idx in preload_cache[cache_key]:
+        rgb, depth = preload_cache[cache_key][frame_idx]
     else:
         rgb_path = os.path.join(image_path, cam_name, rgb_dir, f'{frame_idx}.png')
         depth_path = os.path.join(image_path, cam_name, depth_dir, f'{frame_idx}.npy')
@@ -125,9 +151,16 @@ def load_single_camera_view(image_path, cam_name, frame_idx, rgb_dir, depth_dir,
     return points, colors
 
 
-def load_camera_data(image_path, cam_name_list, frame_idx, rgb_dir, depth_dir, cam_info_dict):
+def load_camera_data(image_path, cam_name_list, frame_idx, rgb_dir, depth_dir, cam_info_dict, variant_key='default'):
+    """
+    Load camera data for all cameras with variant-specific caching.
+
+    Args:
+        variant_key: String identifier for the variant (e.g., 'pcd', 'pcd_no_hand')
+    """
     global frame_cache
-    cache_key = (frame_idx, tuple(cam_name_list))
+    # Include variant_key in cache key to separate variants
+    cache_key = (frame_idx, tuple(cam_name_list), variant_key)
     if cache_key in frame_cache:
         return frame_cache[cache_key]
 
@@ -138,7 +171,7 @@ def load_camera_data(image_path, cam_name_list, frame_idx, rgb_dir, depth_dir, c
         for cam_name in cam_name_list:
             intrinsics = cam_info_dict[cam_name]['intrinsics']
             extrinsics = cam_info_dict[cam_name]['extrinsics']
-            futures.append(executor.submit(load_single_camera_view, image_path, cam_name, frame_idx, rgb_dir, depth_dir, intrinsics, extrinsics))
+            futures.append(executor.submit(load_single_camera_view, image_path, cam_name, frame_idx, rgb_dir, depth_dir, intrinsics, extrinsics, variant_key))
         for future in futures:
             points, colors = future.result()
             points_list.append(points)
@@ -255,9 +288,9 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     if generate_both_variants:
         for variant_key in ['pcd', 'pcd_no_hand']:
             preload_all_frames(image_paths[variant_key], cam_views, frame_indices,
-                             rgb_dirs[variant_key], depth_dirs[variant_key])
+                             rgb_dirs[variant_key], depth_dirs[variant_key], variant_key=variant_key)
     else:
-        preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir)
+        preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir, variant_key='default')
 
     def process_frame(frame_idx):
         # OPTIMIZATION: Process both variants in one pass
@@ -270,7 +303,8 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
                     frame_idx,
                     rgb_dirs[variant_key],
                     depth_dirs[variant_key],
-                    cam_info_dict
+                    cam_info_dict,
+                    variant_key=variant_key  # Pass variant key to prevent cache collision
                 )
 
                 # Assemble combined pcd
@@ -301,7 +335,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
 
         else:
             # Original single-variant processing (backward compatibility)
-            all_points, all_colors = load_camera_data(image_path, [f'cam{v}' for v in cam_views], frame_idx, rgb_dir, depth_dir, cam_info_dict)
+            all_points, all_colors = load_camera_data(image_path, [f'cam{v}' for v in cam_views], frame_idx, rgb_dir, depth_dir, cam_info_dict, variant_key='default')
 
             combined_pcd = assemble_combined_pcd(all_points, all_colors)
 

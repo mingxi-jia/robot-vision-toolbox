@@ -255,9 +255,12 @@ class HandPreprocessor:
         # Clean up temporary images directory
         self.clean_tmp_images()
 
-        # Save hand poses to file
+        # Save hand poses to file (only if hands were detected)
         if cam_num == self.main_cam_idx:
-            np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{self.main_cam_idx}.npy'), hand_poss)
+            if hand_poss is not None:
+                np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{self.main_cam_idx}.npy'), hand_poss)
+            else:
+                print(f"⚠️  Warning: No hands detected on main camera (cam{self.main_cam_idx}) - cannot generate hand poses")
 
         total_time = time.time() - total_start
 

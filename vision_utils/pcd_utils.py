@@ -210,6 +210,8 @@ def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
     Render the gripper or sphere point cloud at the given end effector pose.
     ee_pose: (N,7) array [x,y,z,qx,qy,qz,qw]
     Returns: (N, fix_point_num, 6) point cloud array
+
+    Coordinate convention: Z-axis points DOWN (robotics standard)
     """
     if model_type == 'gripper':
         base_pcd = GRIPPER[:, :3]
@@ -222,8 +224,10 @@ def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
 
     ee_pose = ee_pose.reshape(-1, 7)
     batch_pcds = []
+
     for pose in ee_pose:
         rot = R.from_quat(pose[3:7]).as_matrix()
+        # Quaternion already has Z-flip applied in apply_alignment_rotation()
         transformed_points = (rot @ base_pcd.T).T + pose[:3]
         batch_pcds.append(np.hstack([transformed_points, base_color]))
 
@@ -288,6 +292,11 @@ def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_p
     """
     Generate a coordinate axes mesh at a given pose and return its downsampled point cloud.
 
+    Coordinate convention: Right-handed system with Z-axis pointing DOWN.
+    - Red = X axis (forward/right)
+    - Green = Y axis (left/right)
+    - Blue = Z axis (DOWN - pointing toward ground)
+
     Args:
         position (array-like): (x, y, z) position.
         quaternion (array-like): (qx, qy, qz, qw) quaternion orientation.
@@ -305,16 +314,29 @@ def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_p
     transform[:3, :3] = rot_matrix
     transform[:3, 3] = position
 
-    # Create coordinate frame and apply transform
+    # Create coordinate frame (default: Z-up)
     frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_length)
+
+    # Flip Z-axis to point down (rotate 180° around X-axis)
+    # This converts from Z-up (default) to Z-down (robotics convention)
+    transform_axes = np.array([
+        [ -1,  0,  0, 0],
+        [ 0, -1,  0, 0],
+        [ 0,  0, 1, 0],
+        [ 0,  0,  0, 1]
+    ])
+    frame.transform(transform_axes)
+
+    # Apply pose transformation
     frame.transform(transform)
+
     # convert frame mesh to point cloud
     frame_pcd = o3d.geometry.PointCloud()
     frame_pcd.points = o3d.utility.Vector3dVector(np.asarray(frame.vertices))
     frame_pcd.colors = o3d.utility.Vector3dVector(np.asarray(frame.vertex_colors))
     # Downsample the point cloud to fixed_point_num
     frame_pcd = frame_pcd.farthest_point_down_sample(num_samples=fixed_point_num)
-    
+
     return frame_pcd
 
 def pcd_to_voxel(pcds: np.ndarray, gripper_crop: float = None):

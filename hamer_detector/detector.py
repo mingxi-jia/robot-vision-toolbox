@@ -301,12 +301,31 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
 
     starting_time = time.time()
 
+    # IMPROVED SHORTENED MODE:
+    # - Process until at least 1 hand found OR max_frames reached
+    # - Ensures we get at least one good detection for SAM2 prompt
+    max_frames_to_check = 20 if shortened else len(img_paths)
+    frames_processed = 0
+
     # load images and get ViTPose predictions
     for img_path in img_paths:
-        # only process very first frames for shortened mode
-        if shortened and len(batched_entries) >= 6:
-            print("⏭️  Skipping further frames due to shortened mode.")
-            break
+        frames_processed += 1
+
+        # Shortened mode: Stop early if we found at least 1 hand AND processed enough frames
+        if shortened:
+            has_hands = len(batched_entries) > 0
+            reached_min_frames = frames_processed >= 6  # Process at least 6 frames
+            reached_max_frames = frames_processed >= max_frames_to_check
+
+            if has_hands and reached_min_frames:
+                print(f"✅ Found {len(batched_entries)} hand detection(s) in {frames_processed} frames - stopping early (shortened mode)")
+                break
+            elif reached_max_frames:
+                if has_hands:
+                    print(f"✅ Reached max frames ({max_frames_to_check}) with {len(batched_entries)} hand(s) found")
+                else:
+                    print(f"⚠️  Reached max frames ({max_frames_to_check}) but no hands found - continuing anyway")
+                break
 
         img_cv2 = cv2.imread(str(img_path))
         assert img_cv2 is not None, f"❌ Failed to read image: {img_path}"

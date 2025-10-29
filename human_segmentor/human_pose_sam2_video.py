@@ -234,6 +234,37 @@ def run_sam2_segmentation(predictor, source_frames, hand_mask_dir, depth_folder,
         if os.path.splitext(p)[-1].lower() in [".jpg", ".jpeg"]
     ], key=lambda p: str(os.path.splitext(p)[0]))
 
+    # CRITICAL FIX: Check if HaMeR found any hands - if not, skip SAM2 and copy original frames
+    if len(hand_mask_paths) == 0:
+        print("⚠️  Warning: No hand masks found from HaMeR detection.")
+        print("⚠️  Skipping SAM2 segmentation - copying original frames as 'segmented' output.")
+
+        # Create output directories
+        color_output_folder = os.path.join(output_dir, 'segmented_rgb')
+        os.makedirs(color_output_folder, exist_ok=True)
+        depth_output_folder = os.path.join(output_dir, 'segmented_depth')
+        os.makedirs(depth_output_folder, exist_ok=True)
+
+        # Copy original frames to segmented output
+        for frame_idx, frame_name in enumerate(frame_names):
+            # Copy RGB
+            src_rgb = os.path.join(video_dir, frame_name)
+            dst_rgb = os.path.join(color_output_folder, f"{frame_idx:06d}.png")
+            img = cv2.imread(src_rgb)
+            if img is not None:
+                cv2.imwrite(dst_rgb, img)
+
+            # Copy depth
+            depth_name = f"{int(Path(frame_name).stem):06d}.npy"
+            src_depth = os.path.join(depth_folder, depth_name)
+            dst_depth = os.path.join(depth_output_folder, f"{frame_idx:06d}.npy")
+            if os.path.exists(src_depth):
+                depth = np.load(src_depth)
+                np.save(dst_depth, depth)
+
+        print(f"✅ Copied {len(frame_names)} frames to segmented output (no segmentation applied)")
+        return  # Exit early - no SAM2 processing needed
+
     # OPTIMIZATION: Create resized frames for SAM2 if resize_scale != 1.0
     if resize_scale != 1.0:
         resized_video_dir = os.path.join(output_dir, '_sam2_resized_frames_tmp')
