@@ -18,9 +18,15 @@ refactor/
 ## Usage
 
 ```bash
-python pipeline/main.py \
+python hand/main.py \
     --real_dataset_path /path/to/dataset \
     --output_robomimic_path /path/to/output.hdf5
+```
+
+1. Visualizing the pcds
+
+```bash
+python scripts/play_pcd_sequence.py /home/mingxi/data/realworld/hand_rotation_test_strict/output/episode_0/pcd --fps=20 --loop
 ```
 
 ## Components

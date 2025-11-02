@@ -38,7 +38,7 @@ from scipy.spatial.transform import Rotation as R
 import sys
 sys.path.append("./")
 from vision_utils.pcd_utils import convert_RGBD_to_open3d, o3d2np
-from dataset_utils.hand_preprocessor import HandPreprocessor as Hamer
+from hand.hamer_wrapper import HandPreprocessor as Hamer
 from human_segmentor.sphere_pcd import generate_pcd_sequence
 
 from vision_utils.pcd_utils import get_extrinsics_matrix, pcd_to_voxel, render_pcd_from_pose

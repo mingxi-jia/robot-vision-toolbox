@@ -12,10 +12,138 @@ sys.path.append('./')
 from vision_utils.pcd_utils import *
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
 from concurrent.futures import ThreadPoolExecutor
-from downsample import replace_fps_with_simple_voxel
+
 
 frame_cache = {}
 preload_cache = {}
+
+from vision_utils.pcd_utils import get_extrinsics_matrix
+
+def simple_downsample_for_fixed_scene(pcd: o3d.geometry.PointCloud, 
+                                    target_points: int = 4412,
+                                    voxel_size: float = 0.01) -> o3d.geometry.PointCloud:
+    """
+    Simple two-stage downsampling: voxel downsample first, then precise control
+    
+    Args:
+        pcd: Input point cloud
+        target_points: Target number of points (default 4412)
+        voxel_size: Voxel size in meters (default 0.01m = 1cm)
+    
+    Returns:
+        Downsampled point cloud
+    """
+    if len(pcd.points) <= target_points:
+        return pcd
+    
+    # Stage 1: Voxel downsampling for fast point reduction
+    voxel_pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+    
+    # Stage 2: Precise control to target number of points
+    if len(voxel_pcd.points) > target_points:
+        # If still too many points, random downsample to target
+        sampling_ratio = target_points / len(voxel_pcd.points)
+        final_pcd = voxel_pcd.random_down_sample(sampling_ratio=sampling_ratio)
+    else:
+        # If voxel downsampling already reduced below target, return as is
+        final_pcd = voxel_pcd
+    
+    return final_pcd
+
+
+def find_optimal_voxel_size(test_pcd: o3d.geometry.PointCloud, 
+                          target_points: int = 4412) -> float:
+    """
+    Find optimal voxel size for your fixed scene
+    Run once to find suitable voxel_size, then use it directly afterwards
+    """
+    print(f"Finding optimal voxel size for {len(test_pcd.points)} -> {target_points} points")
+    print("-" * 60)
+    
+    # Test different voxel sizes
+    voxel_sizes = [0.005, 0.008, 0.01, 0.012, 0.015, 0.02, 0.025, 0.03]
+    
+    best_voxel_size = 0.01
+    best_error = float('inf')
+    
+    for voxel_size in voxel_sizes:
+        start_time = time.time()
+        result = simple_downsample_for_fixed_scene(test_pcd, target_points, voxel_size)
+        end_time = time.time()
+        
+        result_points = len(result.points)
+        error = abs(result_points - target_points) / target_points
+        
+        print(f"Voxel size: {voxel_size:.3f}m -> {result_points:4d} points, "
+              f"error: {error:.3f}, time: {end_time-start_time:.4f}s")
+        
+        if error < best_error:
+            best_error = error
+            best_voxel_size = voxel_size
+    
+    print(f"\nBest voxel size: {best_voxel_size:.3f}m (error: {best_error:.3f})")
+    return best_voxel_size
+
+
+def replace_fps_with_simple_voxel(combined_pcd: o3d.geometry.PointCloud, 
+                                max_point_num: int) -> o3d.geometry.PointCloud:
+    """
+    Direct replacement for farthest_point_down_sample in your original code
+    
+    Usage:
+    # Original code:
+    # combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
+    
+    # Replace with:
+    # combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
+    """
+    
+    # Recommended voxel size based on your scene
+    # You can determine this value using find_optimal_voxel_size function
+    RECOMMENDED_VOXEL_SIZE = 0.012  # 1.2cm, you can adjust this value
+    
+    return simple_downsample_for_fixed_scene(combined_pcd, max_point_num, RECOMMENDED_VOXEL_SIZE)
+
+
+def load_camera_info_dict(info_path: str) -> dict:
+    """Load camera information from YAML file.
+
+    Args:
+        info_path: Path to camera info YAML file
+
+    Returns:
+        Dictionary with camera info including intrinsics and extrinsics
+    """
+    assert info_path.endswith(".yaml"), "Info file should be a yaml file"
+
+    with open(info_path, 'r') as f:
+        info_dict = yaml.safe_load(f)
+
+    for cam_name, cam_info in info_dict.items():
+        info_dict[cam_name]['intrinsics'] = np.array(cam_info['k']).reshape(3, 3)
+        info_dict[cam_name]['extrinsics'] = get_extrinsics_matrix(cam_info['t'], cam_info['q'])
+
+    return info_dict
+
+
+def convert_state_to_action(ee_pose: np.ndarray) -> np.ndarray:
+    """Convert end-effector poses to actions.
+
+    Args:
+        ee_pose: Array of shape (N, 8) with xyz, quat, gripper
+
+    Returns:
+        Array of shape (N, 7) with xyz, axis-angle, gripper
+    """
+    action = np.concatenate((ee_pose[1:], ee_pose[-1:]), axis=0)
+    xyz = action[:, :3]
+    quat = action[:, 3:7]
+    gripper = action[:, 7:]
+
+    axis_angle = R.from_quat(quat).as_rotvec()
+    actions = np.concatenate((xyz, axis_angle, gripper), axis=-1)
+
+    return actions
 
 def uvz_to_world(u, v, z, intrinsics, extrinsics):
     fx, fy = intrinsics[0, 0], intrinsics[1, 1]
@@ -31,7 +159,7 @@ def uvz_to_world(u, v, z, intrinsics, extrinsics):
     return P_world[:3]
 
 
-def convert_hamer_pose_to_extrinsic(hand_data, extrinsics):
+def transform_hamer_cam_to_robot(hand_data, extrinsics):
     global_pose = {}
     for frame_name, pose in hand_data.items():
         xyz_wrt_cam, quat_wrt_cam = pose[:3], pose[3:7]
@@ -191,7 +319,8 @@ def assemble_combined_pcd(points_list, colors_list):
 
 
 def add_sphere_to_pcd(combined_pcd, pose, visualize_axis=False):
-    pose_aligned = apply_alignment_rotation(pose)
+    # pose_aligned = apply_alignment_rotation(pose)
+    pose_aligned = pose
     sphere = render_pcd_from_pose(pose_aligned[None, ...], fix_point_num=1024, model_type='sphere')
     sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
     if visualize_axis:
@@ -216,7 +345,7 @@ def save_ply_from_npy(npy_file, ply_file):
     os.remove(npy_file) # Remove the .npy file after conversion
 
 
-def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False, downsample_method = "simple_voxel", generate_both_variants=False):
+def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3, segment=True, visualize_coordinate_axis = False, downsample_method = "simple_voxel"):
     """
     Generate a sequence of point clouds from RGB-D images and sphere poses.
 
@@ -240,23 +369,14 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
 
     _, episode_name = os.path.split(episode_path)
 
-    # OPTIMIZATION: Generate both variants in one pass if requested
-    if generate_both_variants:
-        # Set up paths for both variants
-        image_paths = {
-            'pcd': episode_path,  # Original images (with sphere)
-            'pcd_no_hand': os.path.join(output_path, episode_name)  # Segmented images (no hand)
-        }
-        rgb_dirs = {'pcd': 'rgb', 'pcd_no_hand': 'segmented_rgb'}
-        depth_dirs = {'pcd': 'depth', 'pcd_no_hand': 'segmented_depth'}
+    
+    # Single variant generation (backward compatibility)
+    if segment:
+        image_path = os.path.join(output_path, episode_name)
+        rgb_dir, depth_dir, pcd_dir = 'segmented_rgb', 'segmented_depth', 'pcd_no_hand'
     else:
-        # Single variant generation (backward compatibility)
-        if segment:
-            image_path = os.path.join(output_path, episode_name)
-            rgb_dir, depth_dir, pcd_dir = 'segmented_rgb', 'segmented_depth', 'pcd_no_hand'
-        else:
-            image_path = episode_path
-            rgb_dir, depth_dir, pcd_dir = 'rgb', 'depth', 'pcd'
+        image_path = episode_path
+        rgb_dir, depth_dir, pcd_dir = 'rgb', 'depth', 'pcd'
 
     main_cam_name = f'cam{sphere_cam}'
     cam_views = [1, 2, 3]
@@ -264,100 +384,47 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     cam_intrinsics = cam_info_dict[main_cam_name]['intrinsics']
     cam_extrinsics = cam_info_dict[main_cam_name]['extrinsics']
 
-    pose_path = os.path.join(output_path, episode_name, f'hand_poses_wrt_cam{sphere_cam}.npy')
-    hand_pose = np.load(pose_path, allow_pickle=True)[()]
-    pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, cam_extrinsics)
+    pose_path = os.path.join(output_path, episode_name, f'hand_poses_wrt_world.npy')
+    pose_wrt_world = np.load(pose_path, allow_pickle=True)[()]
 
     max_point_num = MAX_POINT_NUM
 
     # Create save directories
-    if generate_both_variants:
-        save_dirs = {
-            'pcd': os.path.join(output_path, episode_name, 'pcd'),
-            'pcd_no_hand': os.path.join(output_path, episode_name, 'pcd_no_hand')
-        }
-        for dir_path in save_dirs.values():
-            os.makedirs(dir_path, exist_ok=True)
-    else:
-        save_dir = os.path.join(output_path, episode_name, pcd_dir)
-        os.makedirs(save_dir, exist_ok=True)
+    save_dir = os.path.join(output_path, episode_name, pcd_dir)
+    os.makedirs(save_dir, exist_ok=True)
 
     frame_indices = sorted(pose_wrt_world.keys())
 
     # Preload frames for both variants if needed
-    if generate_both_variants:
-        for variant_key in ['pcd', 'pcd_no_hand']:
-            preload_all_frames(image_paths[variant_key], cam_views, frame_indices,
-                             rgb_dirs[variant_key], depth_dirs[variant_key], variant_key=variant_key)
-    else:
-        preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir, variant_key='default')
+    preload_all_frames(image_path, cam_views, frame_indices, rgb_dir, depth_dir, variant_key='default')
 
     def process_frame(frame_idx):
         # OPTIMIZATION: Process both variants in one pass
-        if generate_both_variants:
-            for variant_key in ['pcd', 'pcd_no_hand']:
-                # Load camera data for this variant
-                all_points, all_colors = load_camera_data(
-                    image_paths[variant_key],
-                    [f'cam{v}' for v in cam_views],
-                    frame_idx,
-                    rgb_dirs[variant_key],
-                    depth_dirs[variant_key],
-                    cam_info_dict,
-                    variant_key=variant_key  # Pass variant key to prevent cache collision
-                )
+    
+        # Original single-variant processing (backward compatibility)
+        all_points, all_colors = load_camera_data(image_path, [f'cam{v}' for v in cam_views], frame_idx, rgb_dir, depth_dir, cam_info_dict, variant_key='default')
 
-                # Assemble combined pcd
-                combined_pcd = assemble_combined_pcd(all_points, all_colors)
+        combined_pcd = assemble_combined_pcd(all_points, all_colors)
 
-                # Filter and downsample
-                combined_pcd = filter_point_cloud_by_workspace(combined_pcd, WORKSPACE)
+        combined_pcd = filter_point_cloud_by_workspace(combined_pcd, WORKSPACE)
 
-                if downsample_method == "simple_voxel":
-                    combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
-                elif downsample_method == "fps":
-                    combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
-                elif downsample_method == "random":
-                    if len(combined_pcd.points) > max_point_num:
-                        combined_pcd = random_downsample(combined_pcd, max_point_num)
+        if downsample_method == "simple_voxel":
+            combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
+        elif downsample_method == "fps":
+            combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
+        elif downsample_method == "random":
+            if len(combined_pcd.points) > max_point_num:
+                combined_pcd = random_downsample(combined_pcd, max_point_num)
 
-                # Add sphere to pcd
-                pose = pose_wrt_world[frame_idx]
-                combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
+        pose = pose_wrt_world[frame_idx]
+        combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
 
-                # Save npy file to appropriate directory
-                npy_file = os.path.join(save_dirs[variant_key], f"{frame_idx}.npy")
-                points_np = np.asarray(combined_pcd.points)
-                colors_np = np.asarray(combined_pcd.colors)
-                np.save(npy_file, np.hstack([points_np, colors_np]))
+        npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
+        points_np = np.asarray(combined_pcd.points)
+        colors_np = np.asarray(combined_pcd.colors)
+        np.save(npy_file, np.hstack([points_np, colors_np]))
 
-            return None  # No need to return pcd when processing both
-
-        else:
-            # Original single-variant processing (backward compatibility)
-            all_points, all_colors = load_camera_data(image_path, [f'cam{v}' for v in cam_views], frame_idx, rgb_dir, depth_dir, cam_info_dict, variant_key='default')
-
-            combined_pcd = assemble_combined_pcd(all_points, all_colors)
-
-            combined_pcd = filter_point_cloud_by_workspace(combined_pcd, WORKSPACE)
-
-            if downsample_method == "simple_voxel":
-                combined_pcd = replace_fps_with_simple_voxel(combined_pcd, max_point_num)
-            elif downsample_method == "fps":
-                combined_pcd = combined_pcd.farthest_point_down_sample(num_samples=min(max_point_num, len(combined_pcd.points)))
-            elif downsample_method == "random":
-                if len(combined_pcd.points) > max_point_num:
-                    combined_pcd = random_downsample(combined_pcd, max_point_num)
-
-            pose = pose_wrt_world[frame_idx]
-            combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
-
-            npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
-            points_np = np.asarray(combined_pcd.points)
-            colors_np = np.asarray(combined_pcd.colors)
-            np.save(npy_file, np.hstack([points_np, colors_np]))
-
-            return combined_pcd
+        return combined_pcd
 
     print(f"Generating point cloud sequence from episode: {episode_path} with {len(pose_wrt_world.keys())} frames")
     frame_sequence = []
@@ -365,21 +432,6 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
     executor = ThreadPoolExecutor(max_workers=4) # Adjust as needed: multithreading
     frame_sequence = list(executor.map(process_frame, frame_indices))
     executor.shutdown(wait=True)
-
-    # OPTIMIZATION (2025-01-28): Skip .ply conversion for 10x I/O speedup
-    # Original implementation (commented out for reference):
-    # After all frames processed, batch convert npy to ply in parallel
-    # def convert_and_save(frame_idx):
-    #     npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
-    #     ply_file = os.path.join(save_dir, f"{frame_idx}.ply")
-    #     save_ply_from_npy(npy_file, ply_file)
-    #
-    # with ThreadPoolExecutor(max_workers=4) as executor2:
-    #     executor2.map(convert_and_save, frame_indices)
-
-    # Optimized implementation: Only save .npy files, skip .ply conversion
-    # .ply files are not needed for the pipeline, only for visualization
-    # If you need .ply files for visualization, uncomment the code above
     print(f"✅ Saved {len(frame_indices)} point clouds as .npy files (skipped .ply conversion for speed)")
 
     return pose_wrt_world
@@ -394,7 +446,7 @@ def convert_pose_to_world(episode_list, process_path, info_dict, main_cam=3):
             print(f"Episode {episode_name} already processed. Skipping...")
             hand_poses_path = os.path.join(process_path, episode_name, "hand_poses.npy")
             hand_pose = np.load(hand_poses_path, allow_pickle=True)[()]
-            pose_wrt_world = convert_hamer_pose_to_extrinsic(hand_pose, info_dict[main_cam]['extrinsics'])
+            pose_wrt_world = transform_hamer_cam_to_robot(hand_pose, info_dict[main_cam]['extrinsics'])
             np.save(os.path.join(process_path, episode_name, "hand_poses_wrt_world.npy"), pose_wrt_world, allow_pickle=True)
             print(f"saved to hand_poses_wrt_world")
 

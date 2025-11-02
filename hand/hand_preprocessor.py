@@ -5,20 +5,22 @@ import numpy as np
 import torch
 from time import perf_counter
 from tqdm import tqdm
-from dataset_utils.hand_preprocessor import HandPreprocessor as Hamer
-from human_segmentor.sphere_pcd import generate_pcd_sequence
+from hand.hamer_wrapper import HandPreprocessor as Hamer
+from hand.utils import generate_pcd_sequence
 
 
-class Preprocessor:
+
+class HandPreprocessor:
     """Handles preprocessing of episodes."""
 
-    def __init__(self, real_dataset_path: str, info_dict: dict):
+    def __init__(self, real_dataset_path: str, info_dict: dict, main_cam_idx: int):
         """Initialize preprocessor.
 
         Args:
             real_dataset_path: Path to real dataset
             info_dict: Camera information dictionary
         """
+        self.main_cam_idx = main_cam_idx
         self.real_dataset_path = real_dataset_path
         self.process_path = os.path.join(real_dataset_path, "output")
         self.info_dict = info_dict
@@ -48,27 +50,23 @@ class Preprocessor:
 
         # Generate PCD with rendered sphere
         pcd_gen_start = perf_counter()
-        poses_wrt_world = generate_pcd_sequence(
+        generate_pcd_sequence(
             episode_path, self.hamer.process_path, self.info_dict,
-            sphere_cam=3, segment=False, visualize_coordinate_axis=True
+            sphere_cam=self.main_cam_idx, segment=False, visualize_coordinate_axis=True
         )
         elapsed_segment_false = perf_counter() - pcd_gen_start
 
         # Generate PCD with human segmentation
         pcd_gen_start = perf_counter()
-        poses_wrt_world = generate_pcd_sequence(
+        generate_pcd_sequence(
             episode_path, self.hamer.process_path, self.info_dict,
-            sphere_cam=3, segment=True, visualize_coordinate_axis=True
+            sphere_cam=self.main_cam_idx, segment=True, visualize_coordinate_axis=True
         )
         elapsed_segment_true = perf_counter() - pcd_gen_start
 
         # Save poses
         pcd_gen_start = perf_counter()
         torch.cuda.empty_cache()
-        np.save(
-            os.path.join(self.process_path, episode_name, "hand_poses_wrt_world.npy"),
-            poses_wrt_world, allow_pickle=True
-        )
         elapsed_save = perf_counter() - pcd_gen_start
 
         print(f"pcd generation (segment=False) takes {elapsed_segment_false:.2f} seconds.")
@@ -87,6 +85,7 @@ class Preprocessor:
             episode_list: List of episode names to process
         """
         print(f"Extracting actions from real dataset using HAMER...")
+        episode_list.sort() 
         preprocess_start_time = perf_counter()
 
         for episode_name in tqdm(episode_list, desc="Preprocessing episodes"):

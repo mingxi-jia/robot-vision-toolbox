@@ -317,15 +317,15 @@ def add_coordinate_axes_from_pose(position, quaternion, axis_length=0.1, fixed_p
     # Create coordinate frame (default: Z-up)
     frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=axis_length)
 
-    # Flip Z-axis to point down (rotate 180° around X-axis)
-    # This converts from Z-up (default) to Z-down (robotics convention)
-    transform_axes = np.array([
-        [ -1,  0,  0, 0],
-        [ 0, -1,  0, 0],
-        [ 0,  0, 1, 0],
-        [ 0,  0,  0, 1]
-    ])
-    frame.transform(transform_axes)
+    # # Flip Z-axis to point down (rotate 180° around X-axis)
+    # # This converts from Z-up (default) to Z-down (robotics convention)
+    # transform_axes = np.array([
+    #     [ -1,  0,  0, 0],
+    #     [ 0, -1,  0, 0],
+    #     [ 0,  0, 1, 0],
+    #     [ 0,  0,  0, 1]
+    # ])
+    # frame.transform(transform_axes)
 
     # Apply pose transformation
     frame.transform(transform)

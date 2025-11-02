@@ -8,7 +8,7 @@ import numpy as np
 import torch
 from hamer.configs import CACHE_DIR_HAMER
 from hamer_detector.video_preprocessor import subsample_video
-from hamer_detector.detector import detect_hand_pipeline_batch, detect_hand_pipeline 
+from hamer_detector.detector import detect_hand_pipeline_batch, detect_hand_pipeline, detect_hand_pipeline_phantom 
 from hamer.models import HAMER, download_models, load_hamer, DEFAULT_CHECKPOINT
 import sys
 sys.path.append('./')
@@ -21,7 +21,6 @@ import time
 import matplotlib.pyplot as plt
 from hamer_detector.hamer_smoothing import smooth_hand_pose_json
 from human_segmentor.util import rename_images_sequentially
-from human_segmentor.sphere_pcd import generate_pcd_sequence
 
 sys.path.append("submodules/hamer")
 from vitpose_model import ViTPoseModel
@@ -101,7 +100,6 @@ class HandPreprocessor:
 
     def detect_hand(self, args, cam_num, batch_mode=False):
         camera_intrinsics = self.camera_info[f'cam{cam_num}']
-        shortened = False if cam_num == 3 else True
         if batch_mode:
             hand_poss = detect_hand_pipeline_batch(args, 
                                                    self.model, 
@@ -109,8 +107,7 @@ class HandPreprocessor:
                                                    self.cpm, 
                                                    self.detectron, 
                                                    self.renderer, 
-                                                   camera_intrinsics, 
-                                                   shortened)
+                                                   camera_intrinsics)
         else:
             hand_poss = detect_hand_pipeline(args, 
                                              self.model, 
@@ -118,21 +115,18 @@ class HandPreprocessor:
                                              self.cpm, 
                                              self.detectron, 
                                              self.renderer, 
-                                             camera_intrinsics, 
-                                             shortened)
+                                             camera_intrinsics)
         return hand_poss
 
-    def get_hamer_poses(self, hamer_args, cam_num, shortened=False):
+    def get_hamer_poses(self, cam_num):
         """Run the HaMeR hand detection model."""
-        
-        camera_intrinsics = self.camera_info[f'cam{cam_num}']
-        hand_poss = self.detect_hand(hamer_args, cam_num, batch_mode=True)
-        if cam_num == 3:
-            start_tmp= time.time()
-            
-            # hand_poss = smooth_hand_pose_json(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
-            print(f"smoothed_hand_pose_json takes {time.time() - start_tmp:.2f} seconds")
-            convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
+        hand_poss = self.detect_hand(self.get_hamer_args(), cam_num, batch_mode=True)
+        # kalman smoothing only on main cam
+        # if cam_num == self.main_cam_idx:
+        #     start_tmp= time.time()
+        #     hand_poss = smooth_hand_pose_json(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
+        #     print(f"smoothed_hand_pose_json takes {time.time() - start_tmp:.2f} seconds")
+        #     convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
         return hand_poss
         
     def segment_human(self, cam_num):
@@ -211,7 +205,7 @@ class HandPreprocessor:
 
     def process(self, episode_path, cam_num):
         """
-        Run the entire preprocessing pipeline.
+        Run the entire preprocessing hand.
         """
         total_start = time.time()
         # ----------Prepare paths and directories----------------
@@ -234,8 +228,6 @@ class HandPreprocessor:
         self.hamer_out_dir = os.path.join(process_data_path, 'hamer_out')
         self.sphere_out_dir = process_data_path
 
-        hamer_args = self.get_hamer_args()
-
         prep_start = time.time()
         # Prepare temporary images for processing
         img_count = self.prepare()
@@ -243,8 +235,7 @@ class HandPreprocessor:
 
         # Run hand detection
         hamer_start = time.time()
-        shortened = False if cam_num == 3 else True
-        hand_poss = self.get_hamer_poses(hamer_args, cam_num, shortened=shortened)
+        hand_poss = self.get_hamer_poses(cam_num)
         hamer_time = time.time() - hamer_start
 
         # Run human segmentation using SAM2
@@ -258,7 +249,7 @@ class HandPreprocessor:
         # Save hand poses to file (only if hands were detected)
         if cam_num == self.main_cam_idx:
             if hand_poss is not None:
-                np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_cam{self.main_cam_idx}.npy'), hand_poss)
+                np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_world.npy'), hand_poss)
             else:
                 print(f"⚠️  Warning: No hands detected on main camera (cam{self.main_cam_idx}) - cannot generate hand poses")
 
@@ -286,5 +277,5 @@ if __name__ == "__main__":
     for cam_id in [1, 2, 3]:
         print(f"\n========= Processing Camera {cam_id} =========")
         pipeline = HandPreprocessor(args.episode_path, cam_num=cam_id, debug=args.debug)
-        pipeline.process()
+        hand.process()
     generate_pcd_sequence(args.episode_path, start_frame=0, sphere_cam=3)

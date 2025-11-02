@@ -57,7 +57,7 @@ python dataset_utils/real_to_robomimic_converter.py --real_dataset_path=/dataset
 
 # Pipeline: detect hand and replace with disco ball
 ```
-python pipeline.py 
+python hand.py 
 --video_path YOUR_VIDEO_PATH (or image folder path <-- preferred)
 --depth_folder YOUR_DEPTH_PATH
 -- cam_num 3 -> front;  2 -> left;  3-> right; 0 (otherwise, if 0 is used need to put in background_img adn intrinsics_path) 
@@ -76,7 +76,7 @@ mesh-sequence-player  -p folder_to_meshes
 
 ```
 side note: adjust the following parameters if needed
-pipeline.py | [line 18] | SAMPLE_RATE = 3 by default 
+hand.py | [line 18] | SAMPLE_RATE = 3 by default 
 human_pose_segmentor_mp_sam.py | [line 281] | top 2/5 is cropped
 ```
 

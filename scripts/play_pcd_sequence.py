@@ -20,7 +20,8 @@ def load_pcd(path):
     if path.suffix == '.ply':
         return o3d.io.read_point_cloud(str(path))
     elif path.suffix == '.npy':
-        arr = np.load(path)
+        arr = np.load(path, allow_pickle=True)
+        assert arr.shape[0] > 0, f"Empty point cloud in file: {path}"
         points, colors = arr[:, :3], arr[:, 3:6]
         return np2o3d(points, colors)
     else:

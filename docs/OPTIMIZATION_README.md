@@ -58,7 +58,7 @@ Expected output:
 Process a small dataset to verify the optimization:
 
 ```bash
-python pipeline.py \
+python hand.py \
   --video_path test_data/episode_0/cam3/rgb \
   --depth_folder test_data/episode_0/cam3/depth \
   --cam_num 3 \

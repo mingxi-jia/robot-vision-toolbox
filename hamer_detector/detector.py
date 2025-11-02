@@ -29,9 +29,77 @@ from hamer_detector.icp_conversion_optimized import extract_hand_point_cloud, co
 from hamer_detector.vitdet_dataset_batch import ViTDetDatasetBatch
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 
+def visualize_hand(world_vertices, grasp_ori, grasp_pt):
+    import open3d as o3d
+    import numpy as np
+    pcd = o3d.geometry.PointCloud()
+    pcd.points = o3d.utility.Vector3dVector(world_vertices)
+
+    origin = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
+    origin.compute_vertex_normals()
+    pcd_from_mesh = o3d.geometry.PointCloud()
+    pcd_from_mesh.points = origin.vertices
+    pcd_from_mesh.paint_uniform_color([0, 0, 1])
+
+    handpose = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.2)
+    handpose.compute_vertex_normals()
+    transform_matrix = np.eye(4)
+    transform_matrix[:3, :3] = grasp_ori  # Set rotation
+    transform_matrix[:3, 3] = grasp_pt   # Set translation
+    handpose.transform(transform_matrix)
+    handpose_mesh = o3d.geometry.PointCloud()
+    handpose_mesh.points = handpose.vertices
+    handpose_mesh.paint_uniform_color([0, 0, 1])
+
+    pcd = pcd+pcd_from_mesh+handpose_mesh
+    o3d.io.write_point_cloud("output_pointcloud.ply", pcd)
+    print("Point cloud saved as output_pointcloud.ply")
+
+def transform_vertices_to_world(vertices: np.ndarray, camera_extrinsics: np.ndarray) -> np.ndarray:
+    """
+    Transforms vertices to world coordinates by applying the translation offset.
+
+    Args:
+        vertices: Nx3 array of vertices in local coordinates
+        camera_extrinsics: 4x4 array representing the camera extrinsics (rotation + translation)
+
+    Returns:
+        Nx3 array of vertices in world coordinates
+    """
+    # Apply the camera extrinsics to the vertices
+    ones = np.ones((vertices.shape[0], 1))
+    homogenous_vertices = np.hstack((vertices, ones))
+    world_vertices = (camera_extrinsics @ homogenous_vertices.T).T[:, :3]
+    return world_vertices
+
+def transform_pose_to_world(pose: np.ndarray, camera_info: Dict) -> np.ndarray:
+    """
+    Transforms a pose (position + orientation) to world coordinates.
+
+    Args:
+        pose: [xyz, quat] array representing the pose in local coordinates
+        camera_extrinsics: 4x4 array representing the camera extrinsics (rotation + translation)
+
+    Returns:
+        4x4 array representing the pose in world coordinates
+    """
+    pose_matrix = np.eye(4)
+    rotation = R.from_quat(pose[3:7]).as_matrix()
+    pose_matrix[:3, :3] = rotation
+    pose_matrix[:3, 3] = pose[0:3]
+
+    camera_extrinsics = np.eye(4)
+    camera_t, camera_q = camera_info['t'], camera_info['q']
+    camera_extrinsics[:3, :3] = R.from_quat(camera_q).as_matrix()
+    camera_extrinsics[:3, 3] = camera_t
+    world_pose_matrix = camera_extrinsics @ pose_matrix
+    world_pose = np.zeros(7)
+    world_pose[0:3] = world_pose_matrix[:3, 3]
+    world_pose[3:7] = R.from_matrix(world_pose_matrix[:3, :3]).as_quat()
+    return world_pose
 
 
-def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False):
+def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_info, shortened=False):
     min_score = 0.75
 
     model = hamer_model
@@ -235,8 +303,8 @@ def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, rend
             # Rendering complete
             
             hamer_vertices = np.vstack(all_verts)
-            hand_point_cloud = extract_hand_point_cloud(hand_mask, depth_img, camera_intrinsics)
-            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, hand_mask, camera_intrinsics)
+            hand_point_cloud = extract_hand_point_cloud(hand_mask, depth_img, camera_info)
+            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, hand_mask, camera_info)
             if hamer_aligned is None:
                 print(f"⏭️  Skipping frame {hand_key} due to poor depth quality.")
                 # Remove corresponding entry in all_hand_results if frame is skipped
@@ -263,8 +331,8 @@ def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, rend
             # Even without rendering, still compute translation
             dummy_mask = np.ones_like(depth_img, dtype=np.uint8) * 255
             hamer_vertices = np.vstack(all_verts)
-            hand_point_cloud = extract_hand_point_cloud(dummy_mask, depth_img, camera_intrinsics)
-            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, dummy_mask, camera_intrinsics)
+            hand_point_cloud = extract_hand_point_cloud(dummy_mask, depth_img, camera_info)
+            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, dummy_mask, camera_info)
             if hamer_aligned is None:
                 print(f"⏭️  Skipping frame {hand_key} due to poor depth quality.")
                 # Remove corresponding entry in all_hand_results if frame is skipped
@@ -286,7 +354,210 @@ def detect_hand_pipeline(args, hamer_model, hamer_model_cfg, cpm, detector, rend
     except Exception:
         pass
 
-def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_intrinsics, shortened=False):
+def detect_hand_pipeline_phantom(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_info):
+    """
+    Hand detection pipeline using Phantom PhysicallyConstrainedHandModel.
+    This uses the physically-constrained hand model with add_frame() for robust
+    gripper orientation calculation with anatomical constraints.
+    """
+    assert NotImplementedError("Phantom-based pipeline is under development because of the unstability due to keypoint occlusions.")
+    # Import PhysicallyConstrainedHandModel for gripper orientation calculation
+    import sys
+    sys.path.append(str(Path(__file__).parent.parent / "third-party" / "phantom"))
+    from phantom.hand import PhysicallyConstrainedHandModel
+
+    model = hamer_model
+    device = model.device
+
+    os.makedirs(args.out_folder, exist_ok=True)
+
+    img_paths = [img for ext in args.file_type for img in Path(args.img_folder).glob(ext)]
+    img_paths.sort(key=lambda x: int(x.stem.split('_')[0]))
+
+    all_hand_results = {}
+    all_verts, all_keypoints, all_cam_t, all_right, batched_entries = [], [], [], [], []
+
+    # Shortened mode configuration
+    max_frames_to_check = len(img_paths)
+    frames_processed = 0
+
+    # Stage 1: Detect hands and prepare batch
+    print("🔍 Stage 1: Detecting hands...")
+    for img_path in img_paths:
+        frames_processed += 1
+
+        img_cv2 = cv2.imread(str(img_path))
+        assert img_cv2 is not None, f"❌ Failed to read image: {img_path}"
+        img_fn = os.path.splitext(os.path.basename(img_path))[0]
+        frame_id = img_fn.split('_')[0]
+
+        depth_img = np.load(os.path.join(args.depth_folder, f"{frame_id}.npy")) / 1000.
+        img_cv2[depth_img > 1.3] = 0
+
+        # Human detection
+        det_out = detector(img_cv2)
+        det_instances = det_out['instances']
+        valid_idx = (det_instances.pred_classes == 0) & (det_instances.scores > 0.5)
+        pred_bboxes = det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
+        pred_scores = det_instances.scores[valid_idx].cpu().numpy()
+
+        # Keypoint detection
+        img_rgb = img_cv2[..., ::-1]
+        vitposes_out = cpm.predict_pose(img_rgb, [np.concatenate([pred_bboxes, pred_scores[:, None]], axis=1)])
+
+        best_hand = None
+        best_score = -np.inf
+
+        for vitposes in vitposes_out:
+            for hand_keyps, is_right in [(vitposes['keypoints'][-42:-21], 0), (vitposes['keypoints'][-21:], 1)]:
+                valid = hand_keyps[:, 2] > 0.7
+                if valid.sum() > 3:
+                    bbox = [hand_keyps[valid, 0].min(), hand_keyps[valid, 1].min(),
+                            hand_keyps[valid, 0].max(), hand_keyps[valid, 1].max()]
+                    score = np.mean(hand_keyps[valid, 2])
+                    if score > best_score:
+                        best_hand = {"bbox": bbox, "is_right": is_right, "score": score}
+                        best_score = score
+
+        if best_hand:
+            batched_entries.append({
+                "img_path": img_path,
+                "img_cv2": img_cv2,
+                "bbox": best_hand["bbox"],
+                "is_right": best_hand["is_right"],
+                "depth_img": depth_img,
+                "img_fn": img_fn,
+                "score": best_hand["score"]
+            })
+
+    if not batched_entries:
+        print("❌ No valid hands found.")
+        return
+
+    # Stage 2: Run HaMeR inference
+    print(f"🤖 Stage 2: Running HaMeR inference on {len(batched_entries)} frames...")
+    boxes = np.array([e["bbox"] for e in batched_entries])
+    rights = np.array([e["is_right"] for e in batched_entries])
+    imgs = np.array([e["img_cv2"] for e in batched_entries])
+
+    dataset = ViTDetDatasetBatch(hamer_model_cfg, imgs, rescale_factor=args.rescale_factor, boxes=boxes, right=rights)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=args.batch_size, shuffle=False, num_workers=4)
+
+    for i, batch in enumerate(dataloader):
+        start_idx = i * args.batch_size
+        batch = recursive_to(batch, device)
+        with torch.no_grad():
+            with torch.amp.autocast('cuda', dtype=torch.float32):
+                out = model(batch)
+
+        batch_size = batch['img'].shape[0]
+        pred_cam = out['pred_cam']
+        pred_cam[:, 1] = (2 * batch['right'] - 1) * pred_cam[:, 1]
+        box_center = batch["box_center"].float()
+        box_size = batch["box_size"].float()
+        img_size = batch["img_size"].float()
+        scaled_focal_length = hamer_model_cfg.EXTRA.FOCAL_LENGTH / hamer_model_cfg.MODEL.IMAGE_SIZE * img_size.max()
+        cam_t_full = cam_crop_to_full(pred_cam, box_center, box_size, img_size, scaled_focal_length).cpu().numpy()
+
+        for n in range(batch_size):
+            entry = batched_entries[start_idx + n]
+            img_fn = entry["img_fn"]
+            is_right = batch['right'][n].cpu().item()
+            verts = out['pred_vertices'][n].cpu().numpy()
+            verts[:, 0] = (2 * is_right - 1) * verts[:, 0]
+            keypoints = out['pred_keypoints_3d'][n].cpu().numpy()
+            keypoints[:, 0] = (2 * is_right - 1) * keypoints[:, 0]
+            cam_t = cam_t_full[n]
+
+            all_verts.append(verts)
+            all_keypoints.append(keypoints)
+            all_cam_t.append(cam_t)
+            all_right.append(is_right)
+
+    # Stage 3: Compute gripper orientations using PhysicallyConstrainedHandModel
+    print(f"🖐️ Stage 3: Computing gripper orientations with PhysicallyConstrainedHandModel...")
+    hand_poss = {}
+
+    # Initialize Phantom hand model (assume robot name is generic)
+    phantom_hand = PhysicallyConstrainedHandModel(robot_name="ur5")
+    timestamp = 0.0
+
+    for i, entry in enumerate(batched_entries):
+        img_fn = entry["img_fn"]
+        vertices = all_verts[i]
+        keypoints = all_keypoints[i]
+
+        if len(vertices) > 0:
+            # Render hand mask
+            cam_view = renderer.render_rgba_multiple(
+                vertices[None, ...],
+                cam_t=all_cam_t[i][None, ...],
+                render_res=img_size[n],
+                is_right=[all_right[i]],
+                mesh_base_color=LIGHT_BLUE,
+                scene_bg_color=(1, 1, 1),
+                focal_length=scaled_focal_length
+            )
+            hand_mask = (cam_view[:, :, 3] > 0).astype(np.uint8) * 255
+
+            # Extract hand point cloud and align
+            depth_img = entry["depth_img"]
+            hand_pcd = extract_hand_point_cloud(hand_mask, depth_img, camera_info)
+            hamer_aligned, keypoints_aligned = compute_aligned_hamer_translation(vertices, keypoints, hand_pcd, hand_mask, camera_info)
+
+            if hamer_aligned is None:
+                print(f"⏭️  Skipping frame {img_fn} due to poor depth quality.")
+                continue
+
+            # Transform vertices to world coordinates (apply translation offset)
+            camera_t, camera_q = camera_info['t'], camera_info['q']
+            extrinsics = np.eye(4)
+            extrinsics[:3, :3] = R.from_quat(camera_q).as_matrix()
+            extrinsics[:3, 3] = camera_t
+            world_vertices = transform_vertices_to_world(hamer_aligned, extrinsics)
+            world_keypoints = transform_vertices_to_world(keypoints_aligned, extrinsics)
+
+            # Use PhysicallyConstrainedHandModel's add_frame method
+            # This applies physical constraints and computes grasp point/orientation
+            phantom_hand.add_frame(world_keypoints, timestamp, finger_pts=None)
+            timestamp = timestamp + 0.033  # Increment timestamp (assume ~30 FPS)
+
+            # Extract grasp point and orientation from the model
+            # The model stores these in grasp_points and grasp_oris lists
+            grasp_pt = phantom_hand.grasp_points[-1]
+            grasp_ori = phantom_hand.grasp_oris[-1]
+
+            # visualize_hand(world_vertices, grasp_ori, grasp_pt)
+
+            # Convert orientation to quaternion
+            hand_rotation = R.from_matrix(grasp_ori).as_quat()
+            hand_pos = np.concatenate([grasp_pt, hand_rotation])
+
+            # Store results
+            all_hand_results[img_fn] = {
+                "pred_cam_t": grasp_pt.tolist(),
+                "global_orient": grasp_ori.tolist(),
+                "is_right": bool(all_right[i]),
+                "scaled_focal_length": float(scaled_focal_length),
+                "score": float(entry["score"]),
+                "grasp_point": grasp_pt.tolist(),
+            }
+
+            hand_poss[img_fn] = hand_pos
+
+            # Save hand mask
+            cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
+
+    # Save results
+    with open(os.path.join(args.out_folder, "hand_pose_camera_info.json"), "w") as f:
+        json.dump(all_hand_results, f, indent=2)
+
+    print(f"✅ Processed {len(all_hand_results)} frames with PhysicallyConstrainedHandModel")
+    return hand_poss
+
+
+def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_info):
+    assert NotImplementedError("This function is deprecated. Use detect_hand_pipeline_phantom instead. If needed, please conver the handposes from camera to world coordinates separately.")
 
     model = hamer_model
     device = model.device
@@ -297,35 +568,19 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
     # sort
     img_paths.sort(key=lambda x: int(x.stem.split('_')[0]))  # Assuming filenames are like "00001.jpg"
     all_hand_results = {}
-    all_verts, all_cam_t, all_right, batched_entries = [], [], [], []
+    all_verts, all_keypoints, all_cam_t, all_right, batched_entries = [], [], [], [], []
 
     starting_time = time.time()
 
     # IMPROVED SHORTENED MODE:
     # - Process until at least 1 hand found OR max_frames reached
     # - Ensures we get at least one good detection for SAM2 prompt
-    max_frames_to_check = 20 if shortened else len(img_paths)
+    max_frames_to_check = len(img_paths)
     frames_processed = 0
 
     # load images and get ViTPose predictions
     for img_path in img_paths:
         frames_processed += 1
-
-        # Shortened mode: Stop early if we found at least 1 hand AND processed enough frames
-        if shortened:
-            has_hands = len(batched_entries) > 0
-            reached_min_frames = frames_processed >= 6  # Process at least 6 frames
-            reached_max_frames = frames_processed >= max_frames_to_check
-
-            if has_hands and reached_min_frames:
-                print(f"✅ Found {len(batched_entries)} hand detection(s) in {frames_processed} frames - stopping early (shortened mode)")
-                break
-            elif reached_max_frames:
-                if has_hands:
-                    print(f"✅ Reached max frames ({max_frames_to_check}) with {len(batched_entries)} hand(s) found")
-                else:
-                    print(f"⚠️  Reached max frames ({max_frames_to_check}) but no hands found - continuing anyway")
-                break
 
         img_cv2 = cv2.imread(str(img_path))
         assert img_cv2 is not None, f"❌ Failed to read image: {img_path}"
@@ -403,10 +658,14 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
             is_right = batch['right'][n].cpu().item()
             verts = out['pred_vertices'][n].cpu().numpy()
             verts[:, 0] = (2 * is_right - 1) * verts[:, 0]
+            keypoints = out['pred_keypoints_3d'][n].cpu().numpy()
+            keypoints[:, 0] = (2 * is_right - 1) * keypoints[:, 0]
             cam_t = cam_t_full[n]
             global_orient = out['pred_mano_params']['global_orient'][n].detach().contiguous().cpu().numpy()[0]
-            # if not is_right:
-            #     global_orient[0] *= -1
+            if not is_right:
+                rotvec = R.from_matrix(global_orient).as_rotvec()
+                rotvec[1:] *= -1  # flip for left hand
+                global_orient = R.from_rotvec(rotvec).as_matrix()
 
             hand_key = f"{img_fn}"
             all_hand_results[hand_key] = {
@@ -418,6 +677,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
             }
 
             all_verts.append(verts)
+            all_keypoints.append(keypoints)
             all_cam_t.append(cam_t)
             all_right.append(is_right)
 
@@ -436,6 +696,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
         img_fn = os.path.splitext(os.path.basename(img_path))[0]
         # Rendering full image, hand mask, overlay, and updating translation
         v = all_verts[i]
+        keypoints = all_keypoints[i]
         if len(v) > 0:
             # Render RGBA for all hands
             cam_view = renderer.render_rgba_multiple(
@@ -454,8 +715,8 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
             hamer_vertices = np.vstack(v)
             # Use the last image's depth and intrinsics
             depth_img = batched_entries[i]["depth_img"]
-            hand_pcd = extract_hand_point_cloud(hand_mask, depth_img, camera_intrinsics)
-            hamer_aligned = compute_aligned_hamer_translation(hamer_vertices, hand_pcd, hand_mask, camera_intrinsics)
+            hand_pcd = extract_hand_point_cloud(hand_mask, depth_img, camera_info)
+            hamer_aligned, _ = compute_aligned_hamer_translation(hamer_vertices, keypoints, hand_pcd, hand_mask, camera_info)
             if hamer_aligned is None:
                 print(f"⏭️  Skipping frame {img_fn} due to poor depth quality.")
                 # Remove corresponding entry in all_hand_results if frame is skipped
@@ -468,8 +729,15 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
                 cv2.imwrite(os.path.join(args.out_folder, f'{img_fn}_handmask.png'), hand_mask)
 
                 hand_translation = all_hand_results[img_fn]["pred_cam_t"]
-                hand_rotation = R.from_matrix(all_hand_results[img_fn]["global_orient"]).as_quat()
-                hand_pos = np.concatenate([hand_translation, hand_rotation])
+                hand_rotation = all_hand_results[img_fn]["global_orient"]
+                hand_pos = np.concatenate([hand_translation, R.from_matrix(hand_rotation).as_quat()])
+                hand_pos = transform_pose_to_world(hand_pos, camera_info)
+                if i == 0:
+                    # Strong assumption: We always start at the default robot pose
+                    default_pose = R.from_euler('xyz', [180, 0, 0], degrees=True).as_matrix()
+                    corrective_rotation = R.from_quat(hand_pos[3:]).as_matrix().T @ default_pose
+                correct_hand_rotation = R.from_matrix(R.from_quat(hand_pos[3:]).as_matrix() @ corrective_rotation).as_quat()
+                hand_pos[3:] = correct_hand_rotation
                 hand_poss[img_fn] = hand_pos
 
 

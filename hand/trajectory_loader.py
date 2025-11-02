@@ -5,7 +5,7 @@ import numpy as np
 import open3d as o3d
 from PIL import Image
 from vision_utils.pcd_utils import o3d2np, pcd_to_voxel
-from pipeline.utils import convert_state_to_action
+from hand.utils import convert_state_to_action
 
 
 class TrajectoryLoader:
@@ -76,13 +76,13 @@ class TrajectoryLoader:
         Returns:
             Tuple of (pcd, pcd_no_robot)
         """
-        pcd_path = os.path.join(process_path, "pcd", f"{frame_idx}.ply")
-        pcd_no_robot_path = os.path.join(process_path, "pcd_no_hand", f"{frame_idx}.ply")
+        pcd_path = os.path.join(process_path, "pcd", f"{frame_idx}.npy")
+        pcd_no_robot_path = os.path.join(process_path, "pcd_no_hand", f"{frame_idx}.npy")
 
-        pcd = o3d.io.read_point_cloud(pcd_path)
-        pcd_no_robot = o3d.io.read_point_cloud(pcd_no_robot_path)
+        pcd = np.load(pcd_path)
+        pcd_no_robot = np.load(pcd_path)
 
-        return o3d2np(pcd), o3d2np(pcd_no_robot)
+        return pcd, pcd_no_robot
 
     def load_trajectory(self, episode_name: str) -> dict:
         """Load complete trajectory.

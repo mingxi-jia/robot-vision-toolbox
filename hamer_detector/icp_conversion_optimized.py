@@ -231,13 +231,103 @@ def extract_hand_point_cloud(mask, depth_img, camera_intrinsics):
     return extract_hand_point_cloud_vectorized(mask, depth_img, camera_intrinsics)
 
 
-def compute_aligned_hamer_translation(hamer_vertices, hand_point_cloud, mask, camera_intrinsics):
+def compute_aligned_hamer_translation(hamer_vertices, hand_keypoints, scene_pcd, mask, camera_info):
     """
-    Alias for compute_aligned_hamer_translation_optimized for backward compatibility.
+    Align HaMeR hand mesh vertices to depth point cloud using ICP-like alignment.
+
+    This is an optimized version of compute_aligned_hamer_translation() that uses
+    vectorized operations for 30x speedup.
+
+    The alignment process:
+    1. Z-alignment: Match mesh depth to point cloud depth (percentile-based)
+    2. 2D alignment: Match projected mesh to mask contour in image space
+
+    Args:
+        hamer_vertices (np.ndarray): (V, 3) HaMeR mesh vertices in camera frame
+        hand_point_cloud (np.ndarray): (N, 3) 3D points from depth sensor
+        mask (np.ndarray): (H, W) binary hand mask
+        camera_intrinsics (dict): Camera intrinsics with keys 'fx', 'fy', 'cx', 'cy'
+
+    Returns:
+        np.ndarray: (V, 3) aligned vertices, or None if alignment fails
+
+    Performance:
+        - Original: ~0.3-0.5s
+        - Optimized: ~0.01-0.02s (30x faster)
+
+    Example:
+        >>> vertices = hamer_output['pred_vertices'][0].cpu().numpy()  # (778, 3)
+        >>> point_cloud = extract_hand_point_cloud_vectorized(mask, depth, intrinsics)
+        >>> aligned = compute_aligned_hamer_translation_optimized(
+        ...     vertices, point_cloud, mask, intrinsics
+        ... )
+        >>> if aligned is not None:
+        ...     print(f"Alignment successful, translation: {aligned.mean(axis=0) - vertices.mean(axis=0)}")
     """
-    return compute_aligned_hamer_translation_optimized(
-        hamer_vertices, hand_point_cloud, mask, camera_intrinsics
-    )
+    # Work on a copy to avoid modifying the original
+    hamer_vertices = hamer_vertices.copy()
+    hand_keypoints = hand_keypoints.copy()
+
+    # ========== Step 1: Z-Alignment (Depth) ==========
+
+    if scene_pcd.shape[0] == 0:
+        print("⚠️ Empty point cloud! Cannot align.")
+        return None
+
+    # Filter point cloud by valid depth range (0.2m to 2.0m)
+    valid_depth_mask = (scene_pcd[:, 2] > 0.2) & (scene_pcd[:, 2] < 2.0)
+
+    if valid_depth_mask.sum() < 50:
+        print(f"⚠️ Not enough valid depth points ({valid_depth_mask.sum()}/50). Skipping alignment.")
+        return None
+
+    filtered_pc = scene_pcd[valid_depth_mask]
+
+    # Refine depth range to realistic hand distance (0.2m to 1.5m)
+    valid_z_mask = (filtered_pc[:, 2] > 0.2) & (filtered_pc[:, 2] < 1.5)
+
+    if valid_z_mask.sum() < 50:
+        print(f"⚠️ Not enough points in valid Z range ({valid_z_mask.sum()}/50). Skipping alignment.")
+        return None
+
+    filtered_pc = filtered_pc[valid_z_mask]
+
+    # Compute depth offset using 10th percentile (robust to outliers)
+    pointcloud_z = np.percentile(filtered_pc[:, 2], 10)
+    mesh_z = np.percentile(hamer_vertices[:, 2], 10)
+    z_offset = pointcloud_z - mesh_z
+
+    # Apply Z offset to all vertices
+    hamer_vertices[:, 2] += z_offset
+    hand_keypoints[:, 2] += z_offset
+
+    # ========== Step 2: 2D Alignment (Image Space) ==========
+
+    fx = camera_info['fx']
+    fy = camera_info['fy']
+    cx = camera_info['cx']
+    cy = camera_info['cy']
+
+    # Project vertices to image coordinates (vectorized)
+    verts_2d = project_points_to_image(hamer_vertices, camera_info)
+
+    # Get mask contour
+    mask_contour = get_mask_contour(mask)
+
+    if mask_contour.shape[0] > 0:
+        # Compute 2D translation to align mesh projection to mask
+        translation_2d = compute_2d_alignment(verts_2d, mask_contour)
+
+        # Back-project 2D translation to 3D (depth-dependent)
+        # delta_X = delta_u * Z / fx
+        # delta_Y = delta_v * Z / fy
+        hamer_vertices[:, 0] += translation_2d[0] / fx * hamer_vertices[:, 2]
+        hamer_vertices[:, 1] += translation_2d[1] / fy * hamer_vertices[:, 2]
+
+        hand_keypoints[:, 0] += translation_2d[0] / fx * hand_keypoints[:, 2]
+        hand_keypoints[:, 1] += translation_2d[1] / fy * hand_keypoints[:, 2]
+
+    return hamer_vertices, hand_keypoints
 
 
 # ========== Unit Tests ==========
