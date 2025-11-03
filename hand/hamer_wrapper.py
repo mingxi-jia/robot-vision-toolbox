@@ -160,7 +160,7 @@ class HandPreprocessor:
         print("🔹 Step 0: Preparing image frames and background...")
 
         img_count = len([f for f in os.listdir(self.video_path)
-                         if f.lower().endswith(('.jpg', '.png'))]) // self.SAMPLE_RATE
+                         if f.lower().endswith(('.png'))]) // self.SAMPLE_RATE
 
         # create tmp data for processing
         if not os.path.exists(self.tmp_img_dir) or len(os.listdir(self.tmp_img_dir)) == 0:
@@ -168,7 +168,7 @@ class HandPreprocessor:
             os.makedirs(self.tmp_img_dir, exist_ok=True)
             image_fnames = sorted([
                 f for f in os.listdir(self.video_path)
-                if f.lower().endswith(('.jpg', '.png'))
+                if f.lower().endswith(('.png'))
             ])
             for i, fname in enumerate(image_fnames):
                 if i % self.SAMPLE_RATE == 0:
@@ -237,6 +237,7 @@ class HandPreprocessor:
         hamer_start = time.time()
         hand_poss = self.get_hamer_poses(cam_num)
         hamer_time = time.time() - hamer_start
+        print(f"🔹 HaMeR hand detection completed in {hamer_time:.2f} seconds for {img_count} frames.")
 
         # Run human segmentation using SAM2
         seg_start = time.time()

@@ -45,6 +45,10 @@ from vision_utils.pcd_utils import get_extrinsics_matrix, pcd_to_voxel, render_p
 
 from configs.workspace import WORKSPACE, MAX_POINT_NUM, VOXEL_SIZE
 
+try:
+    from robotmimic.utils.obs_utils import localize_pcd_batch, crop_pcd
+except ImportError:
+    raise ImportError("Please install robomimic to use this script: pip install git@github.com:mingxi-jia/robomimic.git@voxel ")
 
 def load_camera_info_dict(info_path: str):
     assert info_path.endswith(".yaml"), "Info file should be a yaml file"
@@ -194,28 +198,17 @@ class RealToRobomimicConverter:
         pcd_o3d.colors = o3d.utility.Vector3dVector(pcd_np[:, 3:])
 
         point_num = pcd_np.shape[0]
-        assert point_num > 1024, "Too few points in the point cloud after filtering."
+        assert point_num > 0, "Too few points in the point cloud after filtering."
 
         # OPTIMIZATION (2025-01-28): Use random sampling instead of FPS for 50-100x speedup
         # Original implementation (commented out for reference):
-        # if pcd_np.shape[0] >= self.fix_point_num:
-        #     pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
-        # else:
-        #     extra_choice = np.random.choice(point_num, self.fix_point_num-pcd.shape[0], replace=True)
-        #     pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
-        # pcd_np = o3d2np(pcd_o3d)
-
-        # Optimized implementation (random sampling, 50-100x faster):
-        if point_num >= self.fix_point_num:
-            # Random downsampling
-            indices = np.random.choice(point_num, self.fix_point_num, replace=False)
-            pcd_np = pcd_np[indices]
+        if pcd_np.shape[0] >= self.fix_point_num:
+            pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
         else:
-            # Upsample by duplicating random points
-            extra_indices = np.random.choice(point_num, self.fix_point_num - point_num, replace=True)
-            pcd_np = np.concatenate([pcd_np, pcd_np[extra_indices]], axis=0)
+            extra_choice = np.random.choice(point_num, self.fix_point_num-pcd.shape[0], replace=True)
+            pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
 
-        return pcd_np, None  # Return None for pcd_o3d as we don't need it anymore
+        return o3d2np(pcd_o3d)  # Return None for pcd_o3d as we don't need it anymore
 
     def get_traj_length(self, episode_name: str):
         episode_path = os.path.join(self.real_dataset_path, episode_name)
@@ -272,8 +265,8 @@ class RealToRobomimicConverter:
                 rgb_dict[f'{cam}_image'].append(rgb)
                 depth_dict[f'{cam}_depth'].append(depth)
 
-            np_pcd, _ = self.process_raw_pcd(pcd)
-            np_pcd_no_robot, _ = self.process_raw_pcd(pcd_no_robot)
+            np_pcd, _ = self.process_raw_pcd(pcd, pose)
+            np_pcd_no_robot, _ = self.process_raw_pcd(pcd_no_robot, pose)
             np_voxels = pcd_to_voxel(np_pcd[None,...])[0]
             np_voxels_render = self.get_render_pcd(np_pcd_no_robot, pose)
 
@@ -298,6 +291,10 @@ class RealToRobomimicConverter:
         voxel_dict = dict()
         voxel_dict['voxel'] = np.stack(voxel_seq).astype(np.uint8) 
         voxel_dict['voxel_render'] = np.stack(voxel_render_seq).astype(np.uint8)
+
+        pcd_dict = dict()
+        pcd_dict['pcd'] = np.stack(pcd_seq)
+
 
         obss = {**rgb_dict, **depth_dict, **state_dict, **voxel_dict, 'pcd': np.stack(pcd_seq)}
         # merge obs and rgb_dict

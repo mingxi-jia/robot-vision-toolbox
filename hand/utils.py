@@ -386,6 +386,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
 
     pose_path = os.path.join(output_path, episode_name, f'hand_poses_wrt_world.npy')
     pose_wrt_world = np.load(pose_path, allow_pickle=True)[()]
+    assert len(pose_wrt_world) > 0, "No hand poses found!"
 
     max_point_num = MAX_POINT_NUM
 

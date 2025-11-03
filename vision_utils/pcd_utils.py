@@ -240,15 +240,6 @@ def o3d2np(pcd_o3d, num_samples=4412):
     rgb = np.asarray(pcd_o3d.colors)
     num_points = xyz.shape[0]
 
-    if num_points > num_samples:
-        pcd_o3d = pcd_o3d.farthest_point_down_sample(num_samples=num_samples)
-        xyz = np.asarray(pcd_o3d.points)
-        rgb = np.asarray(pcd_o3d.colors)
-        pcd_np = np.concatenate([xyz, rgb], axis=1)
-    else:
-        pcd_np = np.concatenate([xyz, rgb], axis=1)
-        pcd_np = populate_point_num(pcd_np, num_samples)
-
     return pcd_np
 def filter_point_cloud_by_workspace(pcd, workspace_limits):
     """
