@@ -12,7 +12,7 @@ import numpy as np
 from tqdm import tqdm
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
 from hand.utils import load_camera_info_dict
-from hand.point_cloud_processor import PointCloudProcessor
+from hand.trajectory_loader import PointCloudProcessor
 from hand.hand_preprocessor import HandPreprocessor
 from hand.trajectory_loader import TrajectoryLoader
 
@@ -48,6 +48,7 @@ class RealToRobomimicConverter:
         self.main_cam = f'cam{main_cam_idx}'
         self.workspace = WORKSPACE
         self.fix_point_num = MAX_POINT_NUM
+        obs_type = 'pcd'
 
         # Load camera info
         self.info_dict = load_camera_info_dict(os.path.join('configs', "camera_info.yaml"))
@@ -58,7 +59,7 @@ class RealToRobomimicConverter:
         )
         self.hand_preprocessor = HandPreprocessor(real_dataset_path, self.info_dict, main_cam_idx)
         self.trajectory_loader = TrajectoryLoader(
-            real_dataset_path, self.process_path,
+            real_dataset_path, self.process_path, obs_type,
             cam_list, self.main_cam, self.pcd_processor
         )
 

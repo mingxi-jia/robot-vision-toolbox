@@ -11,7 +11,6 @@ refactor/
 ├── converter.py             # Main converter orchestrator
 ├── preprocessing.py         # Episode preprocessing with HAMER
 ├── trajectory_loader.py     # Trajectory loading and assembly
-├── point_cloud_processor.py # Point cloud processing utilities
 └── utils.py                 # Shared utilities (camera, state conversion)
 ```
 
