@@ -1,6 +1,7 @@
 import os
 import copy
 from pathlib import Path
+from typing import List, Tuple
 
 import open3d as o3d
 import numpy as np
@@ -8,6 +9,7 @@ import yaml
 from PIL import Image
 from scipy.spatial.transform import Rotation as R
 import matplotlib.pyplot as plt
+from .transform_utils import apply_transform
 from configs.workspace import WORKSPACE, VOXEL_RESOLUTION, WS_SIZE, VOXEL_SIZE
 
 
@@ -76,14 +78,7 @@ def o3d2np(pcd_o3d, num_samples=4412):
     rgb = np.asarray(pcd_o3d.colors)
     num_points = xyz.shape[0]
 
-    if num_points > num_samples:
-        pcd_o3d = pcd_o3d.farthest_point_down_sample(num_samples=num_samples)
-        xyz = np.asarray(pcd_o3d.points)
-        rgb = np.asarray(pcd_o3d.colors)
-        pcd_np = np.concatenate([xyz, rgb], axis=1)
-    else:
-        pcd_np = np.concatenate([xyz, rgb], axis=1)
-        pcd_np = populate_point_num(pcd_np, num_samples)
+    pcd_np = np.concatenate([xyz, rgb], axis=1)
 
     return pcd_np
 
@@ -176,34 +171,6 @@ def apply_se3_pcd_transform(points, transform):
     transformed_points = (transform @ points_homogeneous.T).T
     new_points[:, :3] = transformed_points[:, :3]
     return new_points
-
-# def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
-#     """
-#     Render the gripper point cloud at the given end effector pose.
-#     ee_pose has a shpae of (N, 7) where 7 means (x, y, z, qx, qy, qz, qw)
-#     is_add_noisy is used to add noise to the point cloud.
-#     """
-#     if model_type == 'gripper':
-#         model_pcd = GRIPPER
-#     elif model_type == 'sphere':
-#         model_pcd = SPHERE
-#     else:
-#         raise NotImplementedError(f"model type {model_type} not implemented")
-
-#     B = list(ee_pose.shape[:-1])
-        
-#     ee_pose = ee_pose.reshape(-1, 7)
-#     batch_size, ndim = ee_pose.shape
-#     pcds = []
-#     for i in range(batch_size):
-#         gripper_pcd = copy.copy(model_pcd)
-#         tran_mat = np.eye(4)
-#         tran_mat[:3, 3] = ee_pose[i, :3] 
-#         tran_mat[:3, :3] = R.from_quat(ee_pose[i, 3:7]).as_matrix()
-#         pcd = apply_se3_pcd_transform(gripper_pcd, tran_mat)
-#         pcds.append(populate_point_num(pcd, fix_point_num))
-
-#     return np.stack(pcds).reshape([*B, fix_point_num, -1])
 
 def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
     """
@@ -371,7 +338,119 @@ def pcd_to_voxel(pcds: np.ndarray, gripper_crop: float = None):
         batch_voxels.append(np_voxels)
     batch_voxels = np.stack(batch_voxels)
     return batch_voxels
+
+
+def filter_by_workspace(pcd: o3d.geometry.PointCloud, workspace: List[float]) -> o3d.geometry.PointCloud:
+    """
+    Filters an Open3D point cloud based on workspace limits (a bounding box).
+
+    Args:
+        pcd (o3d.geometry.PointCloud): The input point cloud.
+        workspace (List[float]): A list of 6 floats [x_min, x_max, y_min, y_max, z_min, z_max].
+
+    Returns:
+        o3d.geometry.PointCloud: The filtered point cloud.
+    """
+    if len(workspace) != 6:
+        raise ValueError("Workspace must be a list of 6 floats: [x_min, x_max, y_min, y_max, z_min, z_max].")
     
+    bbox = o3d.geometry.AxisAlignedBoundingBox(
+        min_bound=(workspace[0], workspace[2], workspace[4]),
+        max_bound=(workspace[1], workspace[3], workspace[5])
+    )
+    return pcd.crop(bbox)
+
+def depth_to_point_cloud(depth_image: np.ndarray, intrinsics: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Converts a depth image to a point cloud in the camera frame.
+
+    Args:
+        depth_image (np.ndarray): The (H, W) depth image.
+        intrinsics (np.ndarray): The (3, 3) camera intrinsics matrix.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray]: A tuple containing:
+            - np.ndarray: The foreground point cloud (N, 3).
+            - np.ndarray: The (H, W) boolean mask of the foreground points.
+    """
+    h, w = depth_image.shape
+    fx, fy = intrinsics[0, 0], intrinsics[1, 1]
+    cx, cy = intrinsics[0, 2], intrinsics[1, 2]
+
+    mask = (depth_image > 0.0) & (depth_image < 2.0)  # Filter invalid depth
+    
+    y_map, x_map = np.meshgrid(np.arange(h), np.arange(w), indexing='ij')
+    x_map = x_map[mask]
+    y_map = y_map[mask]
+
+    points = np.zeros((mask.sum(), 3), dtype=np.float32)
+    points[:, 0] = (x_map - cx) * depth_image[mask] / fx
+    points[:, 1] = (y_map - cy) * depth_image[mask] / fy
+    points[:, 2] = depth_image[mask]
+
+    return points, mask
+
+def numpy_to_open3d(pcd_np: np.ndarray) -> o3d.geometry.PointCloud:
+    """
+    Converts a numpy array to an Open3D PointCloud object.
+
+    Args:
+        pcd_np (np.ndarray): The input numpy array. Can be (N, 3) for xyz
+                                or (N, 6) for xyzrgb.
+
+    Returns:
+        o3d.geometry.PointCloud: The converted Open3D point cloud.
+    """
+    if pcd_np.shape[1] not in [3, 6]:
+        raise ValueError("Input numpy array must have 3 or 6 columns (xyz or xyzrgb).")
+
+    pcd_o3d = o3d.geometry.PointCloud()
+    pcd_o3d.points = o3d.utility.Vector3dVector(pcd_np[:, :3])
+
+    if pcd_np.shape[1] == 6:
+        colors = pcd_np[:, 3:6]
+        if np.max(colors) > 1.0 or np.min(colors) < 0.0:
+            # Clamping color values to be safe
+            colors = np.clip(colors, 0, 1)
+        pcd_o3d.colors = o3d.utility.Vector3dVector(colors)
+
+    return pcd_o3d
+
+def rgbd_to_o3d(
+        rgb_image: np.ndarray,
+        depth_image: np.ndarray,
+        intrinsics_mat: np.ndarray,
+        extrinsics_mat: np.ndarray,
+    ) -> Tuple[np.ndarray, o3d.geometry.PointCloud]:
+        """
+        Converts RGB and depth images to a transformed Open3D point cloud in the world frame.
+
+        Args:
+            rgb_image (np.ndarray): The (H, W, 3) RGB image (uint8).
+            depth_image (np.ndarray): The (H, W) depth image (float).
+            intrinsics (np.ndarray): The (3, 3) camera intrinsics matrix.
+            extrinsics (np.ndarray): The (4, 4) camera extrinsics matrix (camera to world).
+
+        Returns:
+            Tuple[np.ndarray, o3d.geometry.PointCloud]: A tuple containing:
+                - np.ndarray: The transformed point cloud as a numpy array (N, 3).
+                - o3d.geometry.PointCloud: The transformed Open3D point cloud.
+        """
+        if not (rgb_image.shape[:2] == depth_image.shape and rgb_image.ndim == 3 and depth_image.ndim == 2):
+            raise ValueError("RGB and Depth image dimensions do not match.")
+        if not (intrinsics_mat.shape == (3, 3) and extrinsics_mat.shape == (4, 4)):
+            raise ValueError("Invalid intrinsics or extrinsics matrix shape.")
+
+        pcd, mask = depth_to_point_cloud(depth_image, intrinsics_mat)
+        
+        # Apply the extrinsics to transform points from camera to world frame
+        pcd_world_np = apply_transform(pcd, extrinsics_mat)
+
+        colors = rgb_image[mask].astype(np.float64) / 255.0
+        pcd_world_o3d = numpy_to_open3d(np.hstack([pcd_world_np, colors]))
+
+        return pcd_world_np, pcd_world_o3d
+
 if __name__ == "__main__":
 
     data_path = "/home/mingxi/data/realworld/red_on_yellow_hand_0703/episode_20250703_125142_958"

@@ -9,7 +9,7 @@ from scipy.spatial.transform import Rotation as R
 sys.path.append(os.path.abspath(os.path.dirname(__file__)))
 
 sys.path.append('./')
-from vision_utils.pcd_utils import *
+from utils.pcd_utils import *
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
 from concurrent.futures import ThreadPoolExecutor
 
@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 frame_cache = {}
 preload_cache = {}
 
-from vision_utils.pcd_utils import get_extrinsics_matrix
+from utils.pcd_utils import get_extrinsics_matrix
 
 def simple_downsample_for_fixed_scene(pcd: o3d.geometry.PointCloud, 
                                     target_points: int = 4412,

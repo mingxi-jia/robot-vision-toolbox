@@ -52,7 +52,8 @@ num_traj = len(robot_joints)
 print(f"Number of trajectories in the dataset: {num_traj}")
 
 # Use multi-camera meta
-robot_seg = RobotArmSegmentation("example_data/robomimic/multi_camera_meta.json")
+robot_seg = RobotArmSegmentation(is_simulation=True)
+robot_seg.load_camera_metadata("example_data/robomimic/multi_camera_meta.json")
 robot_seg.load_urdf("panda_description/urdf/panda_arm_hand.urdf")
 camera_names = ['spaceview', 'sideview2', 'backview']
 

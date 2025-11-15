@@ -12,7 +12,7 @@ from pathlib import Path
 import time
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from vision_utils.pcd_utils import np2o3d
+from utils.pcd_utils import np2o3d
 
 
 def load_pcd(path):

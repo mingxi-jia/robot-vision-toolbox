@@ -4,12 +4,12 @@ import time
 import os
 import copy 
 
-from robot_filter.utils import convert_RGBD_to_open3d
+from utils.pcd_utils import convert_RGBD_to_open3d
 os.environ["MUJOCO_GL"] = "osmesa"
 # from robosuite.controllers import load_controller_config
 import numpy as np
 import open3d as o3d
-from urdfpy import URDF
+from urchin import URDF
 import matplotlib.pyplot as plt
 import tempfile
 import imageio.v2 as imageio
@@ -22,14 +22,23 @@ from scipy.spatial import cKDTree
 # and the function can be called with different rgb, depth, and joints
 # class RobotArmSegmentation:
 class RobotArmSegmentation:
-    def __init__(self, camera_json_path):
-        with open(camera_json_path, "r") as f:
-            self.camera_json = json.load(f)
+    def __init__(self, is_simulation=False):
         self.robot_urdf = None
         self.robot_urdf = None
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
-            
+
+        if is_simulation:
+            self.base_pose = np.array([-0.56, 0., 0.912])
+            self.base_quat = np.array([1., 0., 0., 0.])  # Assuming no rotation, identity quaternion
+        else:
+            self.base_pose = np.array([0., 0., 0.])
+            self.base_quat = np.array([1., 0., 0., 0.])
+    
+    def load_camera_metadata(self, camera_json_path):
+        with open(camera_json_path, 'r') as f:
+            self.camera_json = json.load(f)
+
     def set_camera(self, camera_name):  
         if camera_name not in self.camera_json:
             raise ValueError(f"Camera '{camera_name}' not found in camera metadata.")
@@ -55,34 +64,36 @@ class RobotArmSegmentation:
     
     #load urdf as part of the class as well
     def load_urdf(self, urdf_path):
-        urdf_path = "/home/mingxi/Desktop/rosella_work_folder/panda_description/urdf/panda_arm_hand.urdf"
-
         with open(urdf_path, 'r') as f:
             urdf_content = f.read()
 
-        absolute_base_path = "/home/mingxi/Desktop/rosella_work_folder/panda_description/"
-        # urdf_str = urdf_content.replace("package://panda_description/", absolute_base_path)
-        urdf_str = (
-            urdf_content
-                .replace("package://panda_description", absolute_base_path)
-                .replace("panda_description/meshes", f"{absolute_base_path}/meshes")
-        )
+        # Get the package directory (parent of 'urdf' directory)
+        urdf_dir = os.path.dirname(os.path.abspath(urdf_path))
+        package_dir = os.path.dirname(urdf_dir)
 
+        # Replace package:// URIs with absolute paths
+        urdf_str = urdf_content.replace("package://panda_description", package_dir)
 
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".urdf", delete=False) as f:
             f.write(urdf_str)
             f.flush()
             self.robot_urdf = URDF.load(f.name)
+            temp_file_path = f.name
+
+        # Clean up the temp file after loading
+        try:
+            os.unlink(temp_file_path)
+        except:
+            pass
 
         # Assuming the robot is at the origin, no transformation needed
         # If you have a specific pose, set T_world_urdf accordingly
 
-        base_pose = np.array([-0.56, 0., 0.912])
-        base_quat = np.array([1., 0., 0., 0.])  # Assuming no rotation, identity quaternion
-
         self.T_world_urdf = np.eye(4)  # Identity matrix for no transformation
-        self.T_world_urdf[:3, :3] = R.from_quat(base_quat, scalar_first=True).as_matrix()  # rotation part
-        self.T_world_urdf[:3, 3] = base_pose[:3]  # translation part
+        # Convert quaternion from [w, x, y, z] to [x, y, z, w] format for scipy
+        quat_xyzw = np.array([self.base_quat[1], self.base_quat[2], self.base_quat[3], self.base_quat[0]])
+        self.T_world_urdf[:3, :3] = R.from_quat(quat_xyzw).as_matrix()  # rotation part
+        self.T_world_urdf[:3, 3] = self.base_pose[:3]  # translation part
 
         return self.robot_urdf
 
@@ -256,12 +267,16 @@ class RobotArmSegmentation:
 
         return filtered_pcd, pcd  # Return the filtered point cloud and original scene point cloud
 
-    def segment(self, original_pcd: np.ndarray, joints):
-        assert pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
-
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(original_pcd)
-        pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
+    def segment(self, original_pcd, joints):
+        # Handle both Open3D PointCloud and numpy array inputs
+        if isinstance(original_pcd, o3d.geometry.PointCloud):
+            pcd = original_pcd
+        else:
+            # Assume it's a numpy array
+            assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
+            pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
 
         # pcd = tsdf_volume.extract_point_cloud()
         pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
@@ -297,7 +312,7 @@ class RobotArmSegmentation:
         # Filter scene points close to robot mesh
         robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.02)  # downsample for efficiency
 
-        FILTER_THRESH = 0.01
+        FILTER_THRESH = 0.025
         robot_points_np = np.asarray(robot_pcd.points)  # Convert to numpy array for fast distance computation          
         scene_points_np = np.asarray(pcd.points)
         
@@ -308,8 +323,8 @@ class RobotArmSegmentation:
         kept_mask = dists > FILTER_THRESH
         kept = scene_points_np[kept_mask]
         
-        filtered_pcd = o3d.geometry.PointCloud(
-            o3d.utility.Vector3dVector(np.asarray(kept))
-        )
+        filtered_pcd = o3d.geometry.PointCloud()
+        filtered_pcd.points = o3d.utility.Vector3dVector(np.asarray(kept))
+        filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[kept_mask])  # Keep original colors
 
         return filtered_pcd

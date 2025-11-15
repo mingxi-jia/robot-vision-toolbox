@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from tqdm import tqdm
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from vision_utils.pcd_utils import np2o3d
+from utils.pcd_utils import np2o3d
 
 
 def convert_npy_to_ply(npy_path, ply_path):
