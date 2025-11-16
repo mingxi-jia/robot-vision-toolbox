@@ -419,6 +419,7 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
 
         pose = pose_wrt_world[frame_idx]
         combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
+        
 
         npy_file = os.path.join(save_dir, f"{frame_idx}.npy")
         points_np = np.asarray(combined_pcd.points)

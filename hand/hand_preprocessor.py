@@ -6,7 +6,7 @@ import torch
 from time import perf_counter
 from tqdm import tqdm
 from hand.hamer_wrapper import HandPreprocessor as Hamer
-from hand.utils import generate_pcd_sequence
+from hand.hand_utils import generate_pcd_sequence
 
 
 
@@ -60,7 +60,7 @@ class HandPreprocessor:
         pcd_gen_start = perf_counter()
         generate_pcd_sequence(
             episode_path, self.hamer.process_path, self.info_dict,
-            sphere_cam=self.main_cam_idx, segment=True, visualize_coordinate_axis=True
+            sphere_cam=self.main_cam_idx, segment=True, visualize_coordinate_axis=False
         )
         elapsed_segment_true = perf_counter() - pcd_gen_start
 

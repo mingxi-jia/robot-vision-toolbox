@@ -634,8 +634,16 @@ def detect_hand_pipeline_phantom(args, hamer_model, hamer_model_cfg, cpm, detect
     print(f"✅ Processed {len(all_hand_results)} frames with PhysicallyConstrainedHandModel")
     return hand_poss
 
+def clip_image(img_cv2, cam_idx):
+    if cam_idx == 1:
+        img_cv2[:, 350:] = 0 
+    elif cam_idx == 2:
+        img_cv2[:, :100] = 0 
+    elif cam_idx == 3:
+        pass
+    return img_cv2
 
-def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_info):
+def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector, renderer, camera_info, depth_max):
     assert NotImplementedError("This function is deprecated. Use detect_hand_pipeline_phantom instead. If needed, please conver the handposes from camera to world coordinates separately.")
 
     model = hamer_model
@@ -668,7 +676,8 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
         frame_id = img_fn.split('_')[0]
 
         depth_img = np.load(os.path.join(args.depth_folder, f"{frame_id}.npy"))  / 1000.
-        img_cv2[depth_img>1.3] = 0
+        img_cv2[depth_img>depth_max] = 0
+        img_cv2 = clip_image(img_cv2, camera_info['camera_index'])
 
         det_out = detector(img_cv2)
         det_instances = det_out['instances']
@@ -847,7 +856,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
         _, img_fn, hand_mask, _, _, _ = rendered_data[result_idx]
 
         if hamer_aligned is None:
-            print(status)
+            print(f"⚠️  Warning: Skipping frame {img_fn} due to poor depth quality.")
             # Remove from results
             if img_fn in all_hand_results:
                 del all_hand_results[img_fn]

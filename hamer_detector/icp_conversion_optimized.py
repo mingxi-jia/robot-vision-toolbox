@@ -272,14 +272,14 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_keypoints, scene_pcd,
 
     if scene_pcd.shape[0] == 0:
         print("⚠️ Empty point cloud! Cannot align.")
-        return None
+        return None, None
 
     # Filter point cloud by valid depth range (0.2m to 2.0m)
-    valid_depth_mask = (scene_pcd[:, 2] > 0.2) & (scene_pcd[:, 2] < 2.0)
+    valid_depth_mask = (scene_pcd[:, 2] > 0.1) & (scene_pcd[:, 2] < 2.0)
 
     if valid_depth_mask.sum() < 50:
         print(f"⚠️ Not enough valid depth points ({valid_depth_mask.sum()}/50). Skipping alignment.")
-        return None
+        return None, None
 
     filtered_pc = scene_pcd[valid_depth_mask]
 
@@ -288,7 +288,7 @@ def compute_aligned_hamer_translation(hamer_vertices, hand_keypoints, scene_pcd,
 
     if valid_z_mask.sum() < 50:
         print(f"⚠️ Not enough points in valid Z range ({valid_z_mask.sum()}/50). Skipping alignment.")
-        return None
+        return None, None
 
     filtered_pc = filtered_pc[valid_z_mask]
 

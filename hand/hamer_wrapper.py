@@ -100,6 +100,8 @@ class HandPreprocessor:
 
     def detect_hand(self, args, cam_num, batch_mode=False):
         camera_intrinsics = self.camera_info[f'cam{cam_num}']
+        camera_intrinsics['camera_index'] = cam_num  # 0-indexed
+        depth_max = 1.15 if cam_num == 3 else 1.3  # in meters
         if batch_mode:
             hand_poss = detect_hand_pipeline_batch(args, 
                                                    self.model, 
@@ -107,7 +109,8 @@ class HandPreprocessor:
                                                    self.cpm, 
                                                    self.detectron, 
                                                    self.renderer, 
-                                                   camera_intrinsics)
+                                                   camera_intrinsics,
+                                                   depth_max)
         else:
             hand_poss = detect_hand_pipeline(args, 
                                              self.model, 
@@ -251,6 +254,7 @@ class HandPreprocessor:
         if cam_num == self.main_cam_idx:
             if hand_poss is not None:
                 np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_world.npy'), hand_poss)
+                filter_grasp(os.path.join(self.process_path, episode_name), episode_path, hand_poss)
             else:
                 print(f"⚠️  Warning: No hands detected on main camera (cam{self.main_cam_idx}) - cannot generate hand poses")
 
@@ -264,6 +268,17 @@ class HandPreprocessor:
         return hand_poss
 
         
+def filter_grasp(save_path, episode_path, hand_poses):
+    grasp = np.load(os.path.join(os.path.abspath(episode_path), "state", "grasp.npy"))
+    grasp_filter = []
+    i=0
+    for img_idx, hand_pose in hand_poses.items():
+        frame_id = int(img_idx)
+        if frame_id == i:
+            grasp_filter.append(grasp[i])
+        i += 1
+    grasp_filter = np.array(grasp_filter)
+    np.save(os.path.join(save_path, "grasp.npy"), grasp_filter)
 
 # =================== Run all 3 camera views ===================
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ import h5py
 import numpy as np
 from tqdm import tqdm
 from configs.workspace import WORKSPACE, MAX_POINT_NUM
-from hand.utils import load_camera_info_dict
+from hand.hand_utils import load_camera_info_dict
 from hand.trajectory_loader import PointCloudProcessor
 from hand.hand_preprocessor import HandPreprocessor
 from hand.trajectory_loader import TrajectoryLoader

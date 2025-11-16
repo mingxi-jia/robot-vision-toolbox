@@ -128,18 +128,18 @@ def replace_background(image, mask, reference_image, ref_cam=1):
 
     # Camera-specific patches overwrite parts of the background
     # The following sections overwrite specific regions of the composite with the reference image
-    height, width = image.shape[:2]
-    if ref_cam == 1:
-        top_section = height // 6
-        result_image[:top_section, :] = reference_resized[:top_section, :]
-        result_image[:, 3 * width // 4:] = reference_resized[:, 3 * width // 4:]
-    elif ref_cam == 2:
-        top_section = height // 6
-        result_image[:top_section, :] = reference_resized[:top_section, :]
-        result_image[:, :width // 3] = reference_resized[:, :width // 3]
-    else:
-        top_section = 2 * height // 5
-        result_image[:top_section, :] = reference_resized[:top_section, :]
+    # height, width = image.shape[:2]
+    # if ref_cam == 1:
+    #     top_section = height // 6
+    #     result_image[:top_section, :] = reference_resized[:top_section, :]
+    #     result_image[:, 3 * width // 4:] = reference_resized[:, 3 * width // 4:]
+    # elif ref_cam == 2:
+    #     top_section = height // 6
+    #     result_image[:top_section, :] = reference_resized[:top_section, :]
+    #     result_image[:, :width // 3] = reference_resized[:, :width // 3]
+    # else:
+    #     top_section = 2 * height // 5
+    #     result_image[:top_section, :] = reference_resized[:top_section, :]
 
     return result_image
 

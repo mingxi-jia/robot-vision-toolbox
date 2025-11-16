@@ -25,3 +25,4 @@ human_segmentor/.test.py
 .vscode/launch.json
 .claude/
 ./refer
+data/*

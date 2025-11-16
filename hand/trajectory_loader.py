@@ -4,7 +4,7 @@ import os
 import numpy as np
 import open3d as o3d
 from PIL import Image
-from hand.utils import convert_state_to_action
+from hand.hand_utils import convert_state_to_action
 
 from robomimic.utils.obs_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, localize_pcd_batch, 
                                        enlarge_mask, crop_pcd, get_clipspace, get_workspace, get_pcd_z_min)
@@ -69,24 +69,25 @@ class PointCloudProcessor:
         Returns:
             Tuple of (global pcd, local pcd)
         """
-        obs_dict = {}
-        if obs_type == 'voxel':
-            global_obs = pcd_to_voxel(pcd[None, ...])[0]
-            np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='se3')[0]
-            local_obs = pcd_to_voxel(np_pcd_se3_rel[None,...], 'gripper')[0]
-        elif obs_type == 'pcd_se3':
-            global_obs = crop_pcd(np_pcd_se3_rel, input_type='relative')
-            np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='se3')[0]
-            local_obs = crop_pcd(np_pcd_se3_rel, input_type='gripper')
-        elif obs_type == 'pcd_t3':
-            np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='xyz')[0]
-            global_obs = crop_pcd(np_pcd_se3_rel, input_type='relative')
-            local_obs = crop_pcd(np_pcd_se3_rel, input_type='gripper')
-        elif obs_type == 'pcd':
-            global_obs = crop_pcd(pcd, input_type='absolute')
-        else:
-            raise NotImplementedError(f"Observation type {obs_type} not implemented.")
+        # obs_dict = {}
+        # if obs_type == 'voxel':
+        #     global_obs = pcd_to_voxel(pcd[None, ...])[0]
+        #     np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='se3')[0]
+        #     local_obs = pcd_to_voxel(np_pcd_se3_rel[None,...], 'gripper')[0]
+        # elif obs_type == 'pcd_se3':
+        #     global_obs = crop_pcd(np_pcd_se3_rel, input_type='relative')
+        #     np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='se3')[0]
+        #     local_obs = crop_pcd(np_pcd_se3_rel, input_type='gripper')
+        # elif obs_type == 'pcd_t3':
+        #     np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='xyz')[0]
+        #     global_obs = crop_pcd(np_pcd_se3_rel, input_type='relative')
+        #     local_obs = crop_pcd(np_pcd_se3_rel, input_type='gripper')
+        # elif obs_type == 'pcd':
+        #     global_obs = crop_pcd(pcd, input_type='absolute')
+        # else:
+        #     raise NotImplementedError(f"Observation type {obs_type} not implemented.")
         
+        global_obs = crop_pcd(pcd, input_type='absolute')
         return global_obs
             
     def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pos: np.ndarray) -> np.ndarray:
@@ -199,6 +200,8 @@ class TrajectoryLoader:
             os.path.join(process_episode_path, "hand_poses_wrt_world.npy"),
             allow_pickle=True
         )[()]
+        grasps = np.load(os.path.join(process_episode_path, "grasp.npy"))
+        assert len(ee_poss) == len(grasps), "Mismatch in ee_poss and grasps signals."
 
         rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
@@ -214,15 +217,12 @@ class TrajectoryLoader:
 
             np_pcd, _ = self.pcd_processor.process_raw_pcd(pcd)
             np_pcd_no_robot, _ = self.pcd_processor.process_raw_pcd(pcd_no_robot)
-            pcd = np_pcd_no_robot if 'render' in self.obs_type else np_pcd
-            np_pcd = self.pcd_processor.get_pcd_obs(pcd, pose, self.obs_type)
 
-            pcd_seq.append(np_pcd)
+            pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
 
         ee_pos_seq = np.stack(ee_pos_seq)
-        gripper_state_seq = np.zeros((len(ee_pos_seq), 1), dtype=np.float32)
-        actions = convert_state_to_action(np.concatenate((ee_pos_seq, gripper_state_seq), axis=-1))
+        actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps), axis=-1))
 
         rewards = np.zeros((traj_length, 1), dtype=np.float32)
         rewards[-1] = 1.0
