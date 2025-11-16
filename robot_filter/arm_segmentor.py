@@ -210,8 +210,8 @@ class RobotArmSegmentation:
             cam_meta = self.camera_json[camera_name]
             intrinsics = np.array(cam_meta["intrinsic"])
             extrinsics = np.array(cam_meta["extrinsic"])
-            pcd = convert_RGBD_to_open3d(rgb, depth[...,0], intrinsics, extrinsics)
-            all_pcd += pcd
+            pcd, pcd_o3d = convert_RGBD_to_open3d(rgb, depth[...,0], intrinsics, extrinsics)
+            all_pcd += pcd_o3d
 
         # pcd = tsdf_volume.extract_point_cloud()
         pcd = all_pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
@@ -245,6 +245,8 @@ class RobotArmSegmentation:
         robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
 
         # Filter scene points close to robot mesh
+
+        o3d.visualization.draw_geometries([robot_pcd])
         robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.02)  # downsample for efficiency
 
         FILTER_THRESH = 0.01

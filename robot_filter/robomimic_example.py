@@ -1,11 +1,14 @@
 import h5py
 from tqdm import tqdm
 import numpy as np
-from robot_filter.arm_segmentor import RobotArmSegmentation
-
+import sys
 import open3d as o3d
 import os
 import concurrent.futures
+
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from robot_filter.arm_segmentor import RobotArmSegmentation
+
 
 def save_visualization(geometries, save_path, width=800, height=600,viewpoint_json="camera_viewpoint.json"):
     """
@@ -41,7 +44,7 @@ def save_visualization(geometries, save_path, width=800, height=600,viewpoint_js
 
 
 
-dataset_path = 'example_data/robomimic/stack_d1_rel.hdf5'
+dataset_path = 'example_data/robomimic/square_d1_rel.hdf5'
 dataset = h5py.File(dataset_path, 'r')
 
 demo = dataset['data/demo_0']
@@ -53,9 +56,9 @@ print(f"Number of trajectories in the dataset: {num_traj}")
 
 # Use multi-camera meta
 robot_seg = RobotArmSegmentation(is_simulation=True)
-robot_seg.load_camera_metadata("example_data/robomimic/multi_camera_meta.json")
-robot_seg.load_urdf("panda_description/urdf/panda_arm_hand.urdf")
-camera_names = ['spaceview', 'sideview2', 'backview']
+robot_seg.load_camera_metadata("example_data/robomimic/camera_meta.json")
+robot_seg.load_urdf("robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf")
+camera_names = ['spaceview']
 
 # Preload all images and depths for all cameras
 preloaded_rgbs = {}
@@ -87,8 +90,8 @@ def process_frame(i):
 
 import time
 start_time = time.time()
-with concurrent.futures.ProcessPoolExecutor() as executor:
-    list(executor.map(process_frame, range(num_traj)))
+for i in tqdm(range(num_traj), desc="Processing frames"):
+    process_frame(i)
 print(f"Total processing time for {num_traj} frames: {time.time() - start_time:.2f} seconds")
 print(f"Average time per frame: {(time.time() - start_time)/num_traj:.2f} seconds")
 
