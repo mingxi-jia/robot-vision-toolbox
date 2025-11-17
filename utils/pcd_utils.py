@@ -206,8 +206,10 @@ def o3d2np(pcd_o3d, num_samples=4412):
     xyz = np.asarray(pcd_o3d.points)
     rgb = np.asarray(pcd_o3d.colors)
     num_points = xyz.shape[0]
+    pcd_np = np.hstack([xyz, rgb])
 
     return pcd_np
+
 def filter_point_cloud_by_workspace(pcd, workspace_limits):
     """
     Efficiently filters an Open3D point cloud to keep only points within workspace_limits.

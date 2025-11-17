@@ -10,9 +10,14 @@ import cv2
 import numpy as np
 
 
-def load_all_episodes_images(episodes_path, num_cams=3):
+def load_all_episodes_images(episodes_path, num_cams=3, use_segmented=False):
     """
     Load all RGB images from all episodes.
+
+    Args:
+        episodes_path: Path to episodes directory
+        num_cams: Number of cameras
+        use_segmented: If True, load segmented_rgb instead of rgb
 
     Returns:
         episodes_data: list of dicts with {
@@ -32,6 +37,10 @@ def load_all_episodes_images(episodes_path, num_cams=3):
         return []
 
     print(f"Found {len(episodes)} episodes")
+    if use_segmented:
+        print(f"Using segmented RGB images")
+    else:
+        print(f"Using raw RGB images")
 
     episodes_data = []
 
@@ -42,7 +51,10 @@ def load_all_episodes_images(episodes_path, num_cams=3):
         cam_images = {}
 
         for cam_idx in range(1, num_cams + 1):
-            rgb_dir = episode_dir / f"cam{cam_idx}" / "rgb"
+            # Choose rgb or segmented_rgb based on flag
+            img_subdir = "segmented_rgb" if use_segmented else "rgb"
+            rgb_dir = episode_dir / f"cam{cam_idx}" / img_subdir
+
             if not rgb_dir.exists():
                 print(f"\n  Warning: {rgb_dir} does not exist")
                 continue
@@ -72,7 +84,13 @@ def load_all_episodes_images(episodes_path, num_cams=3):
             }
 
         # Load gripper actions
-        grasp_file = episode_dir / "state" / "grasp.npy"
+        # For segmented (processed) data, grasp.npy is in episode root
+        # For raw data, it's in state/ subdirectory
+        if use_segmented:
+            grasp_file = episode_dir / "grasp.npy"
+        else:
+            grasp_file = episode_dir / "state" / "grasp.npy"
+
         grasp_actions = None
         if grasp_file.exists():
             try:
@@ -211,9 +229,14 @@ def create_episode_frame_visualization(episode_data, frame_idx, max_height=600):
     return final_img
 
 
-def visualize_all_episodes(episodes_path, num_cams=3):
+def visualize_all_episodes(episodes_path, num_cams=3, use_segmented=False):
     """
     Interactive visualization of episodes' RGB images.
+
+    Args:
+        episodes_path: Path to episodes directory
+        num_cams: Number of cameras
+        use_segmented: If True, visualize segmented_rgb instead of rgb
 
     Controls:
         - Up/Down arrow: Navigate between episodes
@@ -224,7 +247,7 @@ def visualize_all_episodes(episodes_path, num_cams=3):
         - 'n': Next episode
         - 'p': Previous episode
     """
-    episodes_data = load_all_episodes_images(episodes_path, num_cams)
+    episodes_data = load_all_episodes_images(episodes_path, num_cams, use_segmented)
 
     if not episodes_data:
         print("No episodes found or loaded!")
@@ -340,8 +363,12 @@ def main():
         description="Visualize episodes' RGB images from multiple cameras",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Example:
+Examples:
+  # Visualize raw RGB images
   python inspect_raw_data.py /home/mingxi/code/h2r_franka_ROS2/raw_datasets/episodes
+
+  # Visualize segmented RGB images
+  python inspect_raw_data.py /home/mingxi/mingxi_ws/handpi/data/lift_block_realworld/output --segment
 
 Controls:
   Up/Down arrows: Navigate between episodes
@@ -366,6 +393,12 @@ Controls:
         help="Number of cameras (default: 3)"
     )
 
+    parser.add_argument(
+        "--segment",
+        action="store_true",
+        help="Visualize segmented_rgb instead of raw rgb images"
+    )
+
     args = parser.parse_args()
 
     path = Path(args.path)
@@ -374,7 +407,7 @@ Controls:
         print(f"Error: Path does not exist: {path}")
         return
 
-    visualize_all_episodes(path, args.num_cams)
+    visualize_all_episodes(path, args.num_cams, args.segment)
 
 
 if __name__ == "__main__":

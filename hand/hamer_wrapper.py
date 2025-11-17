@@ -271,12 +271,9 @@ class HandPreprocessor:
 def filter_grasp(save_path, episode_path, hand_poses):
     grasp = np.load(os.path.join(os.path.abspath(episode_path), "state", "grasp.npy"))
     grasp_filter = []
-    i=0
     for img_idx, hand_pose in hand_poses.items():
         frame_id = int(img_idx)
-        if frame_id == i:
-            grasp_filter.append(grasp[i])
-        i += 1
+        grasp_filter.append(grasp[frame_id])
     grasp_filter = np.array(grasp_filter)
     np.save(os.path.join(save_path, "grasp.npy"), grasp_filter)
 

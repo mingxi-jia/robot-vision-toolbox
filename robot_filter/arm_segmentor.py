@@ -281,7 +281,7 @@ class RobotArmSegmentation:
             pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
 
         # pcd = tsdf_volume.extract_point_cloud()
-        pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
+        # pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
 
         # Load URDF and create a mesh for the robot arm
         if not hasattr(self, 'robot_urdf'):
@@ -312,9 +312,9 @@ class RobotArmSegmentation:
         robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
 
         # Filter scene points close to robot mesh
-        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.02)  # downsample for efficiency
+        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)  # downsample for efficiency
 
-        FILTER_THRESH = 0.025
+        FILTER_THRESH = 0.05
         robot_points_np = np.asarray(robot_pcd.points)  # Convert to numpy array for fast distance computation          
         scene_points_np = np.asarray(pcd.points)
         
@@ -325,8 +325,8 @@ class RobotArmSegmentation:
         kept_mask = dists > FILTER_THRESH
         kept = scene_points_np[kept_mask]
         
-        filtered_pcd = o3d.geometry.PointCloud()
-        filtered_pcd.points = o3d.utility.Vector3dVector(np.asarray(kept))
-        filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[kept_mask])  # Keep original colors
-
+        # filtered_pcd = o3d.geometry.PointCloud()
+        # filtered_pcd.points = o3d.utility.Vector3dVector(np.asarray(kept))
+        # filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[kept_mask])  # Keep original colors
+        filtered_pcd = np.concatenate((np.asarray(kept), np.asarray(pcd.colors)[kept_mask]), axis=1)
         return filtered_pcd

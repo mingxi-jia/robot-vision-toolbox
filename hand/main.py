@@ -10,7 +10,7 @@ import os
 import h5py
 import numpy as np
 from tqdm import tqdm
-from configs.workspace import WORKSPACE, MAX_POINT_NUM
+from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
 from hand.hand_utils import load_camera_info_dict
 from hand.trajectory_loader import PointCloudProcessor
 from hand.hand_preprocessor import HandPreprocessor
@@ -47,7 +47,7 @@ class RealToRobomimicConverter:
         main_cam_idx = 3
         self.main_cam = f'cam{main_cam_idx}'
         self.workspace = WORKSPACE
-        self.fix_point_num = MAX_POINT_NUM
+        self.fix_point_num = MAX_POINT_NUM_HDF5
         obs_type = 'pcd'
 
         # Load camera info

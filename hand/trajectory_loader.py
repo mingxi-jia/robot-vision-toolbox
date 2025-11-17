@@ -1,18 +1,25 @@
 """Trajectory loading and processing."""
 
 import os
+from matplotlib import axis
 import numpy as np
 import open3d as o3d
 from PIL import Image
 from hand.hand_utils import convert_state_to_action
 
-from robomimic.utils.obs_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, localize_pcd_batch, 
-                                       enlarge_mask, crop_pcd, get_clipspace, get_workspace, get_pcd_z_min)
+from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose)
+from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
+
+def save_pcd(pcd):
+    pcd_o3d = o3d.geometry.PointCloud()
+    pcd_o3d.points = o3d.utility.Vector3dVector(pcd[:, :3])
+    pcd_o3d.colors = o3d.utility.Vector3dVector(pcd[:, 3:])
+    o3d.io.write_point_cloud("test.ply", pcd_o3d, write_ascii=True)
 
 class PointCloudProcessor:
     """Processes point clouds for dataset conversion."""
 
-    def __init__(self, workspace: np.ndarray, fix_point_num: int, robomimic_center: np.ndarray):
+    def __init__(self, workspace: np.ndarray=WORKSPACE, fix_point_num: int=MAX_POINT_NUM_HDF5, robomimic_center: np.ndarray=None):
         """Initialize processor.
 
         Args:
@@ -39,24 +46,28 @@ class PointCloudProcessor:
             (pcd[:, 1] > self.workspace[1, 0]) & (pcd[:, 1] < self.workspace[1, 1]) &
             (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1])
         )]
-
-        pcd_o3d = o3d.geometry.PointCloud()
-        pcd_o3d.points = o3d.utility.Vector3dVector(pcd_np[:, :3])
-        pcd_o3d.colors = o3d.utility.Vector3dVector(pcd_np[:, 3:])
+        # filter z
+        pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
 
         point_num = pcd_np.shape[0]
-        assert point_num > 1024, "Too few points in the point cloud after filtering."
+        assert point_num > 0, "Too few points in the point cloud after filtering."
+        pcd_np = self.downsample_pcd(pcd_np)
+        return pcd_np
 
-        if pcd_np.shape[0] >= self.fix_point_num:
+    def downsample_pcd(self, pcd: np.ndarray) -> np.ndarray:
+        point_num = pcd.shape[0]
+        if point_num >= self.fix_point_num:
             # Farthest point down sample
+            pcd_o3d = o3d.geometry.PointCloud()
+            pcd_o3d.points = o3d.utility.Vector3dVector(pcd[:, :3])
+            pcd_o3d.colors = o3d.utility.Vector3dVector(pcd[:, 3:])
             pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
+            pcd = o3d2np(pcd_o3d)
         else:
             # Upsample by random selection
-            extra_choice = np.random.choice(point_num, self.fix_point_num - pcd.shape[0], replace=True)
+            extra_choice = np.random.choice(point_num, self.fix_point_num - point_num, replace=True)
             pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
-
-        pcd_np = o3d2np(pcd_o3d)
-        return pcd_np, pcd_o3d
+        return pcd
 
     def get_pcd_obs(self, pcd: np.ndarray, pose: np.ndarray, obs_type: str) -> tuple[np.ndarray, np.ndarray]:
         """Get point cloud observation.
@@ -87,23 +98,24 @@ class PointCloudProcessor:
         # else:
         #     raise NotImplementedError(f"Observation type {obs_type} not implemented.")
         
-        global_obs = crop_pcd(pcd, input_type='absolute')
+        global_obs = pcd
         return global_obs
             
-    def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pos: np.ndarray) -> np.ndarray:
+    def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pose: np.ndarray) -> np.ndarray:
         """Get voxelized rendered point cloud with sphere.
 
         Args:
             pcd_no_robot: Point cloud without robot
-            ee_pos: End-effector position
+            ee_pose: End-effector pose
 
         Returns:
             Voxelized point cloud
         """
-        geco = render_pcd_from_pose(ee_pos, 1024, 'sphere')
+        pcd_no_robot = self.process_raw_pcd(pcd_no_robot)
+        geco = render_pcd_from_pose(ee_pose, 1024, 'sphere')
         pcd_render = np.concatenate([pcd_no_robot, geco], axis=0)
-        np_voxels_render = pcd_to_voxel(pcd_render[None, ...])[0]
-        return np_voxels_render
+        pcd_render = self.downsample_pcd(pcd_render)
+        return pcd_render
 
 
 class TrajectoryLoader:
@@ -179,8 +191,9 @@ class TrajectoryLoader:
         pcd_no_robot_path = os.path.join(process_path, "pcd_no_hand", f"{frame_idx}.npy")
 
         pcd = np.load(pcd_path)
-        pcd_no_robot = np.load(pcd_path)
+        pcd_no_robot = np.load(pcd_no_robot_path)
 
+        
         return pcd, pcd_no_robot
 
     def load_trajectory(self, episode_name: str) -> dict:
@@ -200,8 +213,8 @@ class TrajectoryLoader:
             os.path.join(process_episode_path, "hand_poses_wrt_world.npy"),
             allow_pickle=True
         )[()]
-        grasps = np.load(os.path.join(process_episode_path, "grasp.npy"))
-        assert len(ee_poss) == len(grasps), "Mismatch in ee_poss and grasps signals."
+        grasps_state = np.load(os.path.join(process_episode_path, "grasp.npy"))[:,None]
+        assert len(ee_poss) == len(grasps_state), "Mismatch in ee_poss and grasps signals."
 
         rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
@@ -215,13 +228,15 @@ class TrajectoryLoader:
                 rgb_dict[f'{cam}_image'].append(rgb)
                 depth_dict[f'{cam}_depth'].append(depth)
 
-            np_pcd, _ = self.pcd_processor.process_raw_pcd(pcd)
-            np_pcd_no_robot, _ = self.pcd_processor.process_raw_pcd(pcd_no_robot)
+            np_pcd = self.pcd_processor.process_raw_pcd(pcd)
+            np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot)
 
             pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
 
         ee_pos_seq = np.stack(ee_pos_seq)
+        # offset grasps by one timestep
+        grasps = np.concatenate((grasps_state[1:], grasps_state[-1:]), axis=0)
         actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps), axis=-1))
 
         rewards = np.zeros((traj_length, 1), dtype=np.float32)
@@ -231,7 +246,7 @@ class TrajectoryLoader:
         state_dict = {
             'robot0_eef_pos': ee_pos_seq[:, :3].copy(),
             'robot0_eef_quat': ee_pos_seq[:, 3:7].copy(),
-            'robot0_gripper_qpos': gripper_state_seq.copy()
+            'robot0_gripper_qpos': grasps_state.copy()
         }
 
         pcd_dict = {
