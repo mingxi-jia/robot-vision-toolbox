@@ -21,12 +21,28 @@ from scipy.spatial import cKDTree
 # make this into a class that can be reused, so the camera data is stored in the class
 # and the function can be called with different rgb, depth, and joints
 # class RobotArmSegmentation:
+joint_thresholds = {
+    "panda_link0": 0.08,
+    "panda_link1": 0.08,
+    "panda_link2": 0.08,
+    "panda_link3": 0.08,
+    "panda_link4": 0.08,
+    "panda_link5": 0.08,
+    "panda_link6": 0.08,
+    "panda_link7": 0.08,
+    "panda_link8": 0.08,
+    "panda_hand": 0.04,
+    "panda_leftfinger": 0.02,
+    "panda_rightfinger": 0.02,
+}
+
 class RobotArmSegmentation:
-    def __init__(self, is_simulation=False):
+    def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds):
         self.robot_urdf = None
         self.robot_urdf = None
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
+        self.joint_thresholds = joint_thresholds
 
         if is_simulation:
             self.base_pose = np.array([-0.56, 0., 0.912])
@@ -269,6 +285,11 @@ class RobotArmSegmentation:
 
         return filtered_pcd, pcd  # Return the filtered point cloud and original scene point cloud
 
+
+
+
+
+
     def segment(self, original_pcd, joints):
         # Handle both Open3D PointCloud and numpy array inputs
         if isinstance(original_pcd, o3d.geometry.PointCloud):
@@ -278,55 +299,154 @@ class RobotArmSegmentation:
             assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
             pcd = o3d.geometry.PointCloud()
             pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
-            pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
-
-        # pcd = tsdf_volume.extract_point_cloud()
-        # pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
+            pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])
 
         # Load URDF and create a mesh for the robot arm
         if not hasattr(self, 'robot_urdf'):
             raise ValueError("URDF not loaded. Use load_urdf() to load it.")
 
-        # Get joint angles from simulation
+        # Get joint angles
         joint_names = [j.name for j in self.robot_urdf.actuated_joints]
-        joint_positions = joints  # robosuite joint angles
-
-        # Map names to values
+        joint_positions = joints
         joint_angles = dict(zip(joint_names, joint_positions))
 
-        # Compute transformed robot meshes
-        robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)  # returns mesh, transformation matrix relative to base
+        # Get link forward kinematics
+        link_fk = self.robot_urdf.link_fk(cfg=joint_angles)
 
-        # Sample points from each mesh surface
-        sampled_points = []
-        for mesh, pose in robot_mesh_dict.items():
-            transformed = mesh.copy()
-            transformed.apply_transform(pose)
-            transformed.apply_transform(self.T_world_urdf)  # transform to world frame
-            sampled_points.append(transformed.sample(2500))
-
-        robot_points = np.vstack(sampled_points)
-
-        # Create Open3D point cloud for KDTree
-        robot_pcd = o3d.geometry.PointCloud()
-        robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
-
-        # Filter scene points close to robot mesh
-        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)  # downsample for efficiency
-
-        FILTER_THRESH = 0.05
-        robot_points_np = np.asarray(robot_pcd.points)  # Convert to numpy array for fast distance computation          
         scene_points_np = np.asarray(pcd.points)
-        
-        # Use scipy.spatial.cKDTree for efficient vectorized distance queries
-        robot_tree = cKDTree(robot_points_np)
-        # Query for the minimum distance from each scene point to the robot mesh points
-        dists, _ = robot_tree.query(scene_points_np)
-        kept_mask = dists > FILTER_THRESH
-        kept = scene_points_np[kept_mask]
-        
-        # filtered_pcd = o3d.geometry.PointCloud()
-        # filtered_pcd.points = o3d.utility.Vector3dVector(np.asarray(kept))
-        # filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[kept_mask])  # Keep original colors
-        filtered_pcd = np.concatenate((np.asarray(kept), np.asarray(pcd.colors)[kept_mask]), axis=1)
+        mask_dict = {}
+
+        # Iterate over each link and apply per-link filtering
+        for link_idx, link in enumerate(self.robot_urdf.links):
+            # if link.name not in link_fk:
+            #     continue  # Skip links not in FK (fixed/non-actuated)
+            
+            link_item_name_fk = list(link_fk.keys())[link_idx]
+            link_samples = []
+            # Process each visual geometry in this link
+            for visual in link.visuals:
+                if visual.geometry.mesh is None:
+                    continue
+
+                try:
+                    # Get ALL meshes for this visual (can be multiple per visual element)
+                    for mesh in visual.geometry.mesh.meshes:
+                        mesh_copy = mesh.copy()
+
+                        # Apply visual origin offset (if any)
+                        if visual.origin is not None:
+                            mesh_copy.apply_transform(visual.origin)
+
+                        # Apply link transform from FK
+                        mesh_copy.apply_transform(link_fk[link_item_name_fk])
+
+                        # Apply world transform
+                        mesh_copy.apply_transform(self.T_world_urdf)
+
+                        # Sample points from the transformed mesh
+                        link_samples.append(mesh_copy.sample(2500))
+                except Exception as e:
+                    print(f"Warning: Could not process visual for link {link.name}: {e}")
+                    continue
+
+            if not link_samples:
+                continue  # No valid meshes for this link
+
+            # Combine all mesh samples for this link
+            link_points = np.vstack(link_samples)
+            robot_pcd = o3d.geometry.PointCloud()
+            robot_pcd.points = o3d.utility.Vector3dVector(link_points)
+            robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)
+
+            # Get threshold for this link (use link name as key)
+            FILTER_THRESH = self.joint_thresholds.get(link.name, 0.02)
+            print(f"Filtering with threshold {FILTER_THRESH:.4f} for link '{link.name}'")
+
+            robot_points_np = np.asarray(robot_pcd.points)
+            if len(robot_points_np) == 0:
+                continue
+
+            # Build KDTree and query distances
+            link_tree = cKDTree(robot_points_np)
+            dists, _ = link_tree.query(scene_points_np)
+            kept_mask = dists > FILTER_THRESH
+            mask_dict[link.name] = kept_mask
+
+        if not mask_dict:
+            print("Warning: No link masks created, returning original point cloud")
+            return np.concatenate((scene_points_np, np.asarray(pcd.colors)), axis=1)
+
+        # Combine all masks - keep point only if it's far from ALL links
+        combined_mask = np.ones(len(scene_points_np), dtype=bool)
+        for link_name, mask in mask_dict.items():
+            combined_mask = combined_mask & mask
+
+        kept = scene_points_np[combined_mask]
+        print(f"Filtered: {len(scene_points_np)} -> {len(kept)} points ({100*len(kept)/len(scene_points_np):.1f}% remaining)")
+
+        filtered_pcd = np.concatenate((kept, np.asarray(pcd.colors)[combined_mask]), axis=1)
         return filtered_pcd
+    
+
+    # def segment(self, original_pcd, joints):
+    #     print('defualt mode')
+    #     # Handle both Open3D PointCloud and numpy array inputs
+    #     if isinstance(original_pcd, o3d.geometry.PointCloud):
+    #         pcd = original_pcd
+    #     else:
+    #         # Assume it's a numpy array
+    #         assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
+    #         pcd = o3d.geometry.PointCloud()
+    #         pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
+    #         pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
+
+    #     # pcd = tsdf_volume.extract_point_cloud()
+    #     # pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
+
+    #     # Load URDF and create a mesh for the robot arm
+    #     if not hasattr(self, 'robot_urdf'):
+    #         raise ValueError("URDF not loaded. Use load_urdf() to load it.")
+
+    #     # Get joint angles from simulation
+    #     joint_names = [j.name for j in self.robot_urdf.actuated_joints]
+    #     joint_positions = joints  # robosuite joint angles
+
+    #     # Map names to values
+    #     joint_angles = dict(zip(joint_names, joint_positions))
+
+    #     # Compute transformed robot meshes
+    #     robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)  # returns mesh, transformation matrix relative to base
+
+    #     # Sample points from each mesh surface
+    #     sampled_points = []
+    #     for mesh, pose in robot_mesh_dict.items():
+    #         transformed = mesh.copy()
+    #         transformed.apply_transform(pose)
+    #         transformed.apply_transform(self.T_world_urdf)  # transform to world frame
+    #         sampled_points.append(transformed.sample(2500))
+
+    #     robot_points = np.vstack(sampled_points)
+
+    #     # Create Open3D point cloud for KDTree
+    #     robot_pcd = o3d.geometry.PointCloud()
+    #     robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
+
+    #     # Filter scene points close to robot mesh
+    #     robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)  # downsample for efficiency
+
+    #     FILTER_THRESH = 0.05
+    #     robot_points_np = np.asarray(robot_pcd.points)  # Convert to numpy array for fast distance computation          
+    #     scene_points_np = np.asarray(pcd.points)
+        
+    #     # Use scipy.spatial.cKDTree for efficient vectorized distance queries
+    #     robot_tree = cKDTree(robot_points_np)
+    #     # Query for the minimum distance from each scene point to the robot mesh points
+    #     dists, _ = robot_tree.query(scene_points_np)
+    #     kept_mask = dists > FILTER_THRESH
+    #     kept = scene_points_np[kept_mask]
+        
+    #     # filtered_pcd = o3d.geometry.PointCloud()
+    #     # filtered_pcd.points = o3d.utility.Vector3dVector(np.asarray(kept))
+    #     # filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[kept_mask])  # Keep original colors
+    #     filtered_pcd = np.concatenate((np.asarray(kept), np.asarray(pcd.colors)[kept_mask]), axis=1)
+    #     return filtered_pcd
