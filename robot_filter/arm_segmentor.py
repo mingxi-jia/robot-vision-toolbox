@@ -32,8 +32,8 @@ joint_thresholds = {
     "panda_link7": 0.08,
     "panda_link8": 0.08,
     "panda_hand": 0.04,
-    "panda_leftfinger": 0.02,
-    "panda_rightfinger": 0.02,
+    "panda_leftfinger": 0.03,
+    "panda_rightfinger": 0.03,
 }
 
 class RobotArmSegmentation:
