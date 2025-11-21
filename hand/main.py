@@ -119,7 +119,7 @@ def main():
         help="Output path for the robomimic HDF5 file."
     )
     args = parser.parse_args()
-    input("Ensure that all your hand trajectories always start with the default robot pose (Euler XYZ [180, 0, 0]) because this script is handling pose by enforcing this. Press Enter to continue...")
+    print("Ensure that all your hand trajectories always start with the default robot pose (Euler XYZ [180, 0, 0]) because this script is handling pose by enforcing this. ")
     converter = RealToRobomimicConverter(
         real_dataset_path=args.real_dataset_path,
         output_robomimic_path=args.output_robomimic_path

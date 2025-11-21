@@ -318,15 +318,13 @@ def assemble_combined_pcd(points_list, colors_list):
     return combined_pcd
 
 
-def add_sphere_to_pcd(combined_pcd, pose, visualize_axis=False):
+def add_frame_to_pcd(combined_pcd, pose):
     # pose_aligned = apply_alignment_rotation(pose)
     pose_aligned = pose
-    sphere = render_pcd_from_pose(pose_aligned[None, ...], fix_point_num=1024, model_type='sphere')
-    sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
-    if visualize_axis:
-        frame_pcd = add_coordinate_axes_from_pose(pose_aligned[:3], pose_aligned[3:])
-        sphere_pcd += frame_pcd
-    combined_pcd += sphere_pcd
+    # sphere = render_pcd_from_pose(pose_aligned[None, ...], fix_point_num=1024, model_type='sphere')
+    # sphere_pcd = np2o3d(sphere[:, :3], sphere[:, 3:6])
+    frame_pcd = add_coordinate_axes_from_pose(pose_aligned[:3], pose_aligned[3:])
+    combined_pcd += frame_pcd
     return combined_pcd
 
 
@@ -417,8 +415,9 @@ def generate_pcd_sequence(episode_path, output_path, cam_info_dict, sphere_cam=3
             if len(combined_pcd.points) > max_point_num:
                 combined_pcd = random_downsample(combined_pcd, max_point_num)
 
-        pose = pose_wrt_world[frame_idx]
-        combined_pcd = add_sphere_to_pcd(combined_pcd, pose, visualize_axis=visualize_coordinate_axis)
+        if visualize_coordinate_axis:
+            pose = pose_wrt_world[frame_idx]
+            combined_pcd = add_frame_to_pcd(combined_pcd, pose)
         
 
         npy_file = os.path.join(save_dir, f"{frame_idx}.npy")

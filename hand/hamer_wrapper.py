@@ -19,7 +19,7 @@ from human_segmentor.util import convert_images_to_video, get_first_frame
 # os.environ["PYOPENGL_PLATFORM"] = "glfw"  # force use of native OpenGL
 import time
 import matplotlib.pyplot as plt
-from hamer_detector.hamer_smoothing import smooth_hand_pose_json
+from hamer_detector.hamer_smoothing import smooth_hand_pose
 from human_segmentor.util import rename_images_sequentially
 
 sys.path.append("submodules/hamer")
@@ -124,12 +124,6 @@ class HandPreprocessor:
     def get_hamer_poses(self, cam_num):
         """Run the HaMeR hand detection model."""
         hand_poss = self.detect_hand(self.get_hamer_args(), cam_num, batch_mode=True)
-        # kalman smoothing only on main cam
-        # if cam_num == self.main_cam_idx:
-        #     start_tmp= time.time()
-        #     hand_poss = smooth_hand_pose_json(os.path.join(self.hamer_out_dir, 'hand_pose_camera_info.json'), skip_rate=self.SAMPLE_RATE)
-        #     print(f"smoothed_hand_pose_json takes {time.time() - start_tmp:.2f} seconds")
-        #     convert_images_to_video(self.hamer_out_dir, framerate=30 // self.SAMPLE_RATE)
         return hand_poss
         
     def segment_human(self, cam_num):
@@ -253,6 +247,7 @@ class HandPreprocessor:
         # Save hand poses to file (only if hands were detected)
         if cam_num == self.main_cam_idx:
             if hand_poss is not None:
+                hand_poss = smooth_hand_pose(hand_poss, skip_rate=self.SAMPLE_RATE)
                 np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_world.npy'), hand_poss)
                 filter_grasp(os.path.join(self.process_path, episode_name), episode_path, hand_poss)
             else:
@@ -269,7 +264,11 @@ class HandPreprocessor:
 
         
 def filter_grasp(save_path, episode_path, hand_poses):
-    grasp = np.load(os.path.join(os.path.abspath(episode_path), "state", "grasp.npy"))
+    file_path = os.path.join(os.path.abspath(episode_path), "state", "grasp.npy")
+    if not os.path.exists(file_path):
+        print("Grasp file not found, skipping grasp filtering.")
+        return
+    grasp = np.load(file_path)
     grasp_filter = []
     for img_idx, hand_pose in hand_poses.items():
         frame_id = int(img_idx)

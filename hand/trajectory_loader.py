@@ -5,6 +5,7 @@ from matplotlib import axis
 import numpy as np
 import open3d as o3d
 from PIL import Image
+from scipy.spatial.transform import Rotation as R
 from hand.hand_utils import convert_state_to_action
 
 from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose)
@@ -15,6 +16,37 @@ def save_pcd(pcd):
     pcd_o3d.points = o3d.utility.Vector3dVector(pcd[:, :3])
     pcd_o3d.colors = o3d.utility.Vector3dVector(pcd[:, 3:])
     o3d.io.write_point_cloud("test.ply", pcd_o3d, write_ascii=True)
+
+def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
+    offset = None
+    corrected_hand_poss = dict()
+    for frame_idx, hand_pos in ee_poses.items():
+        # First frame: calculate corrective rotation
+        if offset is None:
+            default_pose = np.eye(4)
+            default_pose[:3, :3] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_matrix()
+            default_pose[:3, 3] = hand_pos[:3]
+
+            init_hand_mat = np.eye(4)
+            init_hand_mat[:3, :3] = R.from_quat(hand_pos[3:]).as_matrix()
+            init_hand_mat[:3, 3] = hand_pos[:3]
+            offset = np.linalg.inv(init_hand_mat) @ default_pose
+            # Add translation along the hand's local coordinates by rotating the local vector
+            local_trans = np.array([0.05, 0.01, 0.03])
+            offset[:3, 3] = offset[:3, 3] + offset[:3, :3] @ local_trans
+
+
+        # Apply corrective rotation (calculated from first frame)
+        hand_mat = np.eye(4)
+        hand_mat[:3, :3] = R.from_quat(hand_pos[3:]).as_matrix()
+        hand_mat[:3, 3] = hand_pos[:3]
+
+        corrected_hand_mat = hand_mat @ offset
+        hand_pos[:3] = corrected_hand_mat[:3, 3]
+        hand_pos[3:] = R.from_matrix(corrected_hand_mat[:3,:3]).as_quat()
+        hand_pos[2] = np.clip(hand_pos[2], 0.0, None)  # prevent z from going below 0
+        corrected_hand_poss[frame_idx] = hand_pos
+    return corrected_hand_poss
 
 class PointCloudProcessor:
     """Processes point clouds for dataset conversion."""
@@ -31,7 +63,7 @@ class PointCloudProcessor:
         self.fix_point_num = fix_point_num
         self.robomimic_center = robomimic_center
 
-    def process_raw_pcd(self, pcd: np.ndarray) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
+    def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
         """Process raw point cloud.
 
         Args:
@@ -47,11 +79,13 @@ class PointCloudProcessor:
             (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1])
         )]
         # filter z
-        pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
+        # pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
 
         point_num = pcd_np.shape[0]
         assert point_num > 0, "Too few points in the point cloud after filtering."
-        pcd_np = self.downsample_pcd(pcd_np)
+
+        # render sphere
+        pcd_np = self.get_render_pcd(pcd_np, pose)
         return pcd_np
 
     def downsample_pcd(self, pcd: np.ndarray) -> np.ndarray:
@@ -111,7 +145,6 @@ class PointCloudProcessor:
         Returns:
             Voxelized point cloud
         """
-        pcd_no_robot = self.process_raw_pcd(pcd_no_robot)
         geco = render_pcd_from_pose(ee_pose, 1024, 'sphere')
         pcd_render = np.concatenate([pcd_no_robot, geco], axis=0)
         pcd_render = self.downsample_pcd(pcd_render)
@@ -213,6 +246,7 @@ class TrajectoryLoader:
             os.path.join(process_episode_path, "hand_poses_wrt_world.npy"),
             allow_pickle=True
         )[()]
+        ee_poss = convert_pose_from_hand_to_fingertip(ee_poss)
         grasps_state = np.load(os.path.join(process_episode_path, "grasp.npy"))[:,None]
         assert len(ee_poss) == len(grasps_state), "Mismatch in ee_poss and grasps signals."
 
@@ -228,16 +262,15 @@ class TrajectoryLoader:
                 rgb_dict[f'{cam}_image'].append(rgb)
                 depth_dict[f'{cam}_depth'].append(depth)
 
-            np_pcd = self.pcd_processor.process_raw_pcd(pcd)
-            np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot)
+            np_pcd = self.pcd_processor.process_raw_pcd(pcd, pose)
+            np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot, pose)
 
             pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
 
         ee_pos_seq = np.stack(ee_pos_seq)
         # offset grasps by one timestep
-        grasps = np.concatenate((grasps_state[1:], grasps_state[-1:]), axis=0)
-        actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps), axis=-1))
+        actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps_state), axis=-1))
 
         rewards = np.zeros((traj_length, 1), dtype=np.float32)
         rewards[-1] = 1.0

@@ -846,7 +846,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
     # Process results and compute world poses
     hand_poss = dict()
     masks_to_write = []
-    corrective_rotation = None
+    offset = None
 
     # Sort alignment_results by original index to maintain order
     alignment_results.sort(key=lambda x: x[0])
@@ -867,6 +867,12 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
             print(f"⚠️  Warning: Frame {img_fn} not found in all_hand_results, skipping...")
             continue
 
+        # Skip frames with low confidence score
+        if all_hand_results[img_fn]["score"] < 0.77:
+            print(f"⚠️  Warning: Skipping frame {img_fn} due to low score ({all_hand_results[img_fn]['score']:.3f}).")
+            del all_hand_results[img_fn]
+            continue
+
         # Update translation
         translation = hamer_aligned.mean(axis=0)
         all_hand_results[img_fn]["pred_cam_t"] = translation.tolist()
@@ -880,16 +886,7 @@ def detect_hand_pipeline_batch(args, hamer_model, hamer_model_cfg, cpm, detector
         hand_pos = np.concatenate([hand_translation, R.from_matrix(hand_rotation).as_quat()])
         hand_pos = transform_pose_to_world(hand_pos, camera_info)
 
-        # First frame: calculate corrective rotation
-        if idx == 0:
-            default_pose = R.from_euler('xyz', [180, 0, 0], degrees=True).as_matrix()
-            corrective_rotation = R.from_quat(hand_pos[3:]).as_matrix().T @ default_pose
-
-        # Apply corrective rotation (calculated from first frame)
-        if corrective_rotation is not None:
-            correct_hand_rotation = R.from_matrix(R.from_quat(hand_pos[3:]).as_matrix() @ corrective_rotation).as_quat()
-            hand_pos[3:] = correct_hand_rotation
-            hand_poss[img_fn] = hand_pos
+        hand_poss[img_fn] = hand_pos
 
     # Write all masks in parallel for 3-4x I/O speedup
     if masks_to_write:

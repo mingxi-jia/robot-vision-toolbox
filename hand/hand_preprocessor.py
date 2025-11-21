@@ -32,51 +32,71 @@ class HandPreprocessor:
         Args:
             episode_name: Name of episode to process
         """
-        done_indicator = os.path.join(
-            self.process_path, episode_name, "hand_poses_wrt_world.npy"
-        )
-        if os.path.exists(done_indicator):
+        if self._is_episode_processed(episode_name):
             print(f"Episode {episode_name} already processed. Skipping...")
             return
 
-        starting_time = perf_counter()
+        start_time = perf_counter()
         episode_path = os.path.join(self.real_dataset_path, episode_name)
 
-        # Process each camera with HAMER
+        # Process cameras and generate point clouds
+        self._process_cameras(episode_path)
+        timings = self._generate_point_clouds(episode_path)
+
+        # Report timings and mark complete
+        self._report_timings(episode_name, start_time, timings)
+        self._mark_episode_complete(episode_name)
+
+    def _is_episode_processed(self, episode_name: str) -> bool:
+        """Check if episode has already been processed."""
+        done_marker = os.path.join(self.process_path, episode_name, 'DONE')
+        return os.path.exists(done_marker)
+
+    def _process_cameras(self, episode_path: str) -> None:
+        """Process all cameras with HAMER."""
         for cam_id in [1, 2, 3]:
             print(f"\n========= Processing Camera {cam_id} =========")
             self.hamer.process(episode_path, cam_id)
             torch.cuda.empty_cache()
 
+    def _generate_point_clouds(self, episode_path: str) -> dict:
+        """Generate point clouds with and without segmentation.
+
+        Returns:
+            Dictionary with timing information
+        """
+        timings = {}
+
         # Generate PCD with rendered sphere
-        pcd_gen_start = perf_counter()
+        start = perf_counter()
         generate_pcd_sequence(
             episode_path, self.hamer.process_path, self.info_dict,
             sphere_cam=self.main_cam_idx, segment=False, visualize_coordinate_axis=True
         )
-        elapsed_segment_false = perf_counter() - pcd_gen_start
+        timings['pcd_no_segment'] = perf_counter() - start
 
         # Generate PCD with human segmentation
-        pcd_gen_start = perf_counter()
+        start = perf_counter()
         generate_pcd_sequence(
             episode_path, self.hamer.process_path, self.info_dict,
             sphere_cam=self.main_cam_idx, segment=True, visualize_coordinate_axis=False
         )
-        elapsed_segment_true = perf_counter() - pcd_gen_start
+        timings['pcd_with_segment'] = perf_counter() - start
 
-        # Save poses
-        pcd_gen_start = perf_counter()
         torch.cuda.empty_cache()
-        elapsed_save = perf_counter() - pcd_gen_start
+        return timings
 
-        print(f"pcd generation (segment=False) takes {elapsed_segment_false:.2f} seconds.")
-        print(f"pcd generation (segment=True) takes {elapsed_segment_true:.2f} seconds.")
-        print(f"pcd saving takes {elapsed_save:.2f} seconds.")
-        print(f"Episode {episode_name} processed in {perf_counter() - starting_time:.2f} seconds.")
+    def _report_timings(self, episode_name: str, start_time: float, timings: dict) -> None:
+        """Print timing information."""
+        print(f"PCD generation (segment=False): {timings['pcd_no_segment']:.2f}s")
+        print(f"PCD generation (segment=True): {timings['pcd_with_segment']:.2f}s")
+        print(f"Episode {episode_name} processed in {perf_counter() - start_time:.2f}s")
 
-        # Create done marker
-        with open(os.path.join(self.process_path, episode_name, 'DONE'), "a") as f:
-            f.write("This is a marker file to indicate that the preprocessing is done for this episode.\n")
+    def _mark_episode_complete(self, episode_name: str) -> None:
+        """Create marker file to indicate processing is complete."""
+        done_marker = os.path.join(self.process_path, episode_name, 'DONE')
+        with open(done_marker, "w") as f:
+            f.write("Preprocessing complete\n")
 
     def preprocess_all(self, episode_list: list[str]) -> None:
         """Preprocess all episodes.
