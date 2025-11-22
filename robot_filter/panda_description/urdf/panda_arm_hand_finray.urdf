@@ -223,6 +223,7 @@
     <visual>
       <geometry>
         <mesh filename="package://panda_description/meshes/visual/hand.dae"/>
+        <!-- <mesh filename="package://panda_description/meshes/visual/hand.dae" scale="1.45 1.25 1.25"/> -->
       </geometry>
     </visual>
     <collision>

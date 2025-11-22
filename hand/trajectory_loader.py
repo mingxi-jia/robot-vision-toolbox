@@ -79,7 +79,7 @@ class PointCloudProcessor:
             (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1])
         )]
         # filter z
-        # pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
+        pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
 
         point_num = pcd_np.shape[0]
         assert point_num > 0, "Too few points in the point cloud after filtering."
