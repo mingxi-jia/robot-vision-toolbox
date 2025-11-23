@@ -5,10 +5,11 @@ from matplotlib import axis
 import numpy as np
 import open3d as o3d
 from PIL import Image
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R, Slerp
 from hand.hand_utils import convert_state_to_action
 
-from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose)
+from robot_filter.arm_segmentor import RobotArmSegmentation
+from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose, convert_RGBD_fast)
 from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
 
 def save_pcd(pcd):
@@ -32,7 +33,7 @@ def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
             init_hand_mat[:3, 3] = hand_pos[:3]
             offset = np.linalg.inv(init_hand_mat) @ default_pose
             # Add translation along the hand's local coordinates by rotating the local vector
-            local_trans = np.array([0.05, 0.01, 0.03])
+            local_trans = np.array([0.06, 0.0, 0.03])
             offset[:3, 3] = offset[:3, 3] + offset[:3, :3] @ local_trans
 
 
@@ -47,6 +48,8 @@ def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
         hand_pos[2] = np.clip(hand_pos[2], 0.0, None)  # prevent z from going below 0
         corrected_hand_poss[frame_idx] = hand_pos
     return corrected_hand_poss
+
+
 
 class PointCloudProcessor:
     """Processes point clouds for dataset conversion."""
@@ -63,7 +66,7 @@ class PointCloudProcessor:
         self.fix_point_num = fix_point_num
         self.robomimic_center = robomimic_center
 
-    def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
+    def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray=None, render: bool=False) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
         """Process raw point cloud.
 
         Args:
@@ -84,8 +87,12 @@ class PointCloudProcessor:
         point_num = pcd_np.shape[0]
         assert point_num > 0, "Too few points in the point cloud after filtering."
 
-        # render sphere
-        pcd_np = self.get_render_pcd(pcd_np, pose)
+        if render:
+            assert pose is not None, "Pose must be provided for rendering."
+            # render sphere
+            pcd_np = self.get_render_pcd(pcd_np, pose)
+        
+        pcd_np = self.downsample_pcd(pcd_np)
         return pcd_np
 
     def downsample_pcd(self, pcd: np.ndarray) -> np.ndarray:
@@ -102,38 +109,6 @@ class PointCloudProcessor:
             extra_choice = np.random.choice(point_num, self.fix_point_num - point_num, replace=True)
             pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
         return pcd
-
-    def get_pcd_obs(self, pcd: np.ndarray, pose: np.ndarray, obs_type: str) -> tuple[np.ndarray, np.ndarray]:
-        """Get point cloud observation.
-
-        Args:
-            pcd: Point cloud array (N, 6)
-            pose: Pose array (7,)
-            obs_type: 'pcd', 'pcd_t3', 'voxel', 'voxel_render'
-
-        Returns:
-            Tuple of (global pcd, local pcd)
-        """
-        # obs_dict = {}
-        # if obs_type == 'voxel':
-        #     global_obs = pcd_to_voxel(pcd[None, ...])[0]
-        #     np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='se3')[0]
-        #     local_obs = pcd_to_voxel(np_pcd_se3_rel[None,...], 'gripper')[0]
-        # elif obs_type == 'pcd_se3':
-        #     global_obs = crop_pcd(np_pcd_se3_rel, input_type='relative')
-        #     np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='se3')[0]
-        #     local_obs = crop_pcd(np_pcd_se3_rel, input_type='gripper')
-        # elif obs_type == 'pcd_t3':
-        #     np_pcd_se3_rel = localize_pcd_batch(pcd[None,...], pose, local_type='xyz')[0]
-        #     global_obs = crop_pcd(np_pcd_se3_rel, input_type='relative')
-        #     local_obs = crop_pcd(np_pcd_se3_rel, input_type='gripper')
-        # elif obs_type == 'pcd':
-        #     global_obs = crop_pcd(pcd, input_type='absolute')
-        # else:
-        #     raise NotImplementedError(f"Observation type {obs_type} not implemented.")
-        
-        global_obs = pcd
-        return global_obs
             
     def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pose: np.ndarray) -> np.ndarray:
         """Get voxelized rendered point cloud with sphere.
@@ -147,14 +122,13 @@ class PointCloudProcessor:
         """
         geco = render_pcd_from_pose(ee_pose, 1024, 'sphere')
         pcd_render = np.concatenate([pcd_no_robot, geco], axis=0)
-        pcd_render = self.downsample_pcd(pcd_render)
         return pcd_render
 
 
 class TrajectoryLoader:
     """Loads and processes trajectories from episodes."""
 
-    def __init__(self, real_dataset_path: str, process_path: str, obs_type: str,
+    def __init__(self, real_dataset_path: str, process_path: str, data_type: str, camera_info_dict: dict,
                  cam_list: list[str], main_cam: str, pcd_processor: PointCloudProcessor):
         """Initialize loader.
 
@@ -165,12 +139,19 @@ class TrajectoryLoader:
             main_cam: Main camera name
             pcd_processor: PointCloudProcessor instance
         """
+        if data_type == "robot":
+            self.robot_filter = RobotArmSegmentation()
+
         self.real_dataset_path = real_dataset_path
         self.process_path = process_path
         self.cam_list = cam_list
+        # exclude cam4 from pcd list
+        self.pcd_cam_list = [cam for cam in cam_list if cam != 'cam4']
+        print(f"Manually setting pcd cameras to: {self.pcd_cam_list} to exclude cam4 (wrist cam).")
         self.main_cam = main_cam
         self.pcd_processor = pcd_processor
-        self.obs_type = obs_type
+        self.data_type = data_type
+        self.camera_info = camera_info_dict
 
     def get_traj_length(self, episode_name: str) -> int:
         """Get trajectory length for episode.
@@ -196,18 +177,34 @@ class TrajectoryLoader:
         Args:
             episode_path: Path to episode
             cam: Camera name
-            frame_idx: Frame index string
+            frame_idx: Frame index integer
 
         Returns:
             Tuple of (rgb, depth)
         """
-        rgb_path = os.path.join(episode_path, cam, "rgb", f"{frame_idx}.png")
-        depth_path = os.path.join(episode_path, cam, "depth", f"{frame_idx}.npy")
+        # camera frames are save as 'timestamp'.png so we need to find the correct file
+        image_files = sorted([f for f in os.listdir(os.path.join(episode_path, cam, "rgb")) if f.endswith(".png")])
+        depth_files = sorted([f for f in os.listdir(os.path.join(episode_path, cam, "depth")) if f.endswith(".npy")])
+        rgb_path = os.path.join(episode_path, cam, "rgb", image_files[frame_idx])
+        depth_path = os.path.join(episode_path, cam, "depth", depth_files[frame_idx])
 
         rgb = np.array(Image.open(rgb_path))
-        depth = np.load(depth_path)
+        depth = np.load(depth_path) / 1000.0  # convert mm to meters
 
         return rgb, depth
+
+    def get_joint_state_from_episode(self, episode_path: str, frame_idx: str) -> np.ndarray:
+        """Get joint state from episode.
+
+        Args:
+            episode_path: Path to episode
+            frame_idx: Frame index string
+
+        Returns:
+            Joint state array
+        """
+        joint_state_path = os.path.join(episode_path, "joint_states.npy")
+        return np.load(joint_state_path)[frame_idx]
 
     def get_pcd_from_episode(self, process_path: str,
                             frame_idx: str) -> tuple[np.ndarray, np.ndarray]:
@@ -238,6 +235,112 @@ class TrajectoryLoader:
         Returns:
             Dictionary with obs, states, actions, rewards, dones
         """
+        if self.data_type == "hand":
+            return self.load_trajectory_hand(episode_name)
+        else:
+            return self.load_trajectory_robot(episode_name)
+
+    def get_pcd_from_rgbd(self, episode_path: str, frame_idx: str) -> tuple[np.ndarray, np.ndarray]:
+        """Get point clouds from rgbd"""
+        pcds = []
+        rgbs, depths = {}, {}
+        for cam in self.cam_list:
+            rgb, depth = self.get_obs_from_episode(episode_path, cam, frame_idx)
+            rgbs[cam] = rgb
+            depths[cam] = depth
+            if cam in self.pcd_cam_list:
+                intrinsics, extrinsics = self.camera_info[cam]['intrinsics'], self.camera_info[cam]['extrinsics']
+                pcd_cam = convert_RGBD_fast(rgb, depth, intrinsics, extrinsics)
+                pcds.append(pcd_cam)
+        pcd = np.concatenate(pcds, axis=0)
+
+        return pcd, rgbs, depths
+
+    def check_integrity(self, episode_path: str) -> None:
+        """Check integrity of episode data. It need to have cam1, cam2, cam3, grasp.npy, joint_states.npy, pose_wrt_world.npy
+
+        Args:
+            episode_path: Path to episode
+        """
+        required_files = [self.main_cam, "grasp.npy", "joint_states.npy", "pose_wrt_world.npy"]
+        for f in required_files:
+            if f.startswith("cam"):
+                cam_path = os.path.join(episode_path, f)
+                if not os.path.exists(cam_path):
+                    raise FileNotFoundError(f"Camera folder {f} not found in episode {episode_path}")
+            else:
+                file_path = os.path.join(episode_path, "state", f)
+                if not os.path.exists(file_path):
+                    raise FileNotFoundError(f"Required file {f} not found in episode {file_path}")
+
+    def load_trajectory_robot(self, episode_name: str) -> dict:
+        """Load robot trajectory.
+
+        Args:
+            episode_name: Name of episode
+
+        Returns:
+            Dictionary with obs, states, actions, rewards, dones
+        """
+        episode_path = os.path.join(self.real_dataset_path, episode_name)
+        self.check_integrity(episode_path)
+        traj_length = self.get_traj_length(episode_name)
+
+        ee_poss = np.load(os.path.join(episode_path, "state", "pose_wrt_world.npy"))
+        joint_states = np.load(os.path.join(episode_path, "state", "joint_states.npy"))
+        grasps_state = np.load(os.path.join(episode_path, "state", "grasp.npy"))[:,None]
+        assert len(ee_poss) == len(grasps_state), "Mismatch in ee_poss and grasps signals."
+
+        rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
+        depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
+        pcd_seq, render_pcd_seq, ee_pos_seq = [], [], []
+
+        for frame_idx, pose in enumerate(ee_poss):
+            joint = joint_states[frame_idx][1:]
+            pcd, rgbs, depths = self.get_pcd_from_rgbd(episode_path, frame_idx)
+            pcd_no_robot = self.robot_filter.segment(self.pcd_processor.process_raw_pcd(pcd, pose, render=False), joint)
+            
+            for cam in self.cam_list:
+                rgb_dict[f'{cam}_image'].append(rgbs[cam])
+                depth_dict[f'{cam}_depth'].append(depths[cam])
+
+            np_pcd = self.pcd_processor.process_raw_pcd(pcd, pose, render=False)
+            np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot, pose, render=True)
+            
+            pcd_seq.append(np_pcd)
+            render_pcd_seq.append(np_pcd_no_robot)
+            ee_pos_seq.append(pose)
+
+        ee_pos_seq = np.stack(ee_pos_seq)
+        # offset grasps by one timestep
+        actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps_state), axis=-1))
+
+        rewards = np.zeros((traj_length, 1), dtype=np.float32)
+        rewards[-1] = 1.0
+        dones = rewards.copy().astype(bool)
+
+        state_dict = {
+            'robot0_eef_pos': ee_pos_seq[:, :3].copy(),
+            'robot0_eef_quat': ee_pos_seq[:, 3:7].copy(),
+            'robot0_gripper_qpos': grasps_state.copy().repeat(2, axis=1), # repeat to match mimicgen format
+        }
+
+        pcd_dict = {
+            'pcd': np.stack(pcd_seq),
+            'render_pcd': np.stack(render_pcd_seq), 
+        }
+
+        obss = {**rgb_dict, **depth_dict, **state_dict, **pcd_dict, 'pcd': np.stack(pcd_seq)}
+
+        return {
+            'obs': obss,
+            'states': ee_pos_seq,
+            'actions': actions,
+            'rewards': rewards,
+            'dones': dones
+        }
+    
+    def load_trajectory_hand(self, episode_name: str) -> dict:
         episode_path = os.path.join(self.real_dataset_path, episode_name)
         process_episode_path = os.path.join(self.process_path, episode_name)
         traj_length = self.get_traj_length(episode_name)
@@ -252,20 +355,21 @@ class TrajectoryLoader:
 
         rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
-        pcd_seq, local_pcd_seq, ee_pos_seq = [], [], []
-
-        for frame_idx, pose in ee_poss.items():
+        pcd_seq, render_pcd_seq, ee_pos_seq = [], [], []
+        
+        for i, (frame_idx, pose) in enumerate(ee_poss.items()):
             pcd, pcd_no_robot = self.get_pcd_from_episode(process_episode_path, frame_idx)
 
             for cam in self.cam_list:
-                rgb, depth = self.get_obs_from_episode(episode_path, cam, frame_idx)
+                rgb, depth = self.get_obs_from_episode(episode_path, cam, i)
                 rgb_dict[f'{cam}_image'].append(rgb)
                 depth_dict[f'{cam}_depth'].append(depth)
 
             np_pcd = self.pcd_processor.process_raw_pcd(pcd, pose)
             np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot, pose)
-
-            pcd_seq.append(np_pcd_no_robot)
+            
+            pcd_seq.append(np_pcd)
+            render_pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
 
         ee_pos_seq = np.stack(ee_pos_seq)
@@ -279,11 +383,12 @@ class TrajectoryLoader:
         state_dict = {
             'robot0_eef_pos': ee_pos_seq[:, :3].copy(),
             'robot0_eef_quat': ee_pos_seq[:, 3:7].copy(),
-            'robot0_gripper_qpos': grasps_state.copy()
+            'robot0_gripper_qpos': grasps_state.copy().repeat(2, axis=1), # repeat to match mimicgen format
         }
 
         pcd_dict = {
-           self.obs_type: np.stack(pcd_seq), 
+            'pcd': np.stack(pcd_seq),
+            'render_pcd': np.stack(render_pcd_seq), 
         }
 
         obss = {**rgb_dict, **depth_dict, **state_dict, **pcd_dict, 'pcd': np.stack(pcd_seq)}

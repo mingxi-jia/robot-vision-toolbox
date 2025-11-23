@@ -37,13 +37,13 @@ joint_thresholds = {
 }
 
 class RobotArmSegmentation:
-    def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds):
+    def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds, urdf_path=None):
         self.robot_urdf = None
         self.robot_urdf = None
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
         self.joint_thresholds = joint_thresholds
-        self.filter_threshold = 0.02
+        self.filter_threshold = 0.03
 
         if is_simulation:
             self.base_pose = np.array([-0.56, 0., 0.912])
@@ -51,6 +51,10 @@ class RobotArmSegmentation:
         else:
             self.base_pose = np.array([0., 0., 0.])
             self.base_quat = np.array([1., 0., 0., 0.])
+
+        if urdf_path is None:
+            urdf_path = "robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf"
+        self.load_urdf(urdf_path)
     
     def load_camera_metadata(self, camera_json_path):
         with open(camera_json_path, 'r') as f:
@@ -396,7 +400,7 @@ class RobotArmSegmentation:
     
 
     def segment(self, original_pcd, joints):
-        print('defualt mode')
+        # print('defualt mode')
         # Handle both Open3D PointCloud and numpy array inputs
         if isinstance(original_pcd, o3d.geometry.PointCloud):
             pcd = original_pcd
@@ -415,7 +419,7 @@ class RobotArmSegmentation:
             raise ValueError("URDF not loaded. Use load_urdf() to load it.")
 
         # Get joint angles from simulation
-        joint_names = [j.name for j in self.robot_urdf.actuated_joints]
+        joint_names = sorted([j.name for j in self.robot_urdf.actuated_joints])
         joint_positions = joints  # robosuite joint angles
 
         # Map names to values
