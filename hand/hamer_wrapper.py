@@ -4,6 +4,7 @@ import time
 import yaml
 from pathlib import Path
 import numpy as np
+from scipy.spatial.transform import Rotation as R, Slerp
 
 import torch
 from hamer.configs import CACHE_DIR_HAMER
@@ -40,6 +41,47 @@ def read_camera_info(camera_info_path: str) -> dict:
         camera_info[cam]['cx'] = intrinsics[0, 2]
         camera_info[cam]['cy'] = intrinsics[1, 2]
     return camera_info
+
+def visualize_hand_poses(ee_poses: dict):
+    import open3d as o3d
+    combined = o3d.geometry.TriangleMesh()
+    for pose in ee_poses.values():
+        translation = pose[:3]
+        quat = pose[3:]
+        coord_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(size=0.05)
+        coord_frame.rotate(R.from_quat(quat).as_matrix(), center=(0, 0, 0))
+        coord_frame.translate(translation)
+        combined += coord_frame
+    o3d.io.write_triangle_mesh("test.ply", combined)
+
+def interpolate_trajectory_gaps(ee_poses: dict) -> dict:
+    frame_indices = sorted([int(idx) for idx in ee_poses.keys()])
+    full_ee_poses = dict()
+
+    for i in range(len(frame_indices)-1):
+        start_idx = frame_indices[i]
+        end_idx = frame_indices[i+1]
+        start_pose = ee_poses[str(start_idx).zfill(6)]
+        end_pose = ee_poses[str(end_idx).zfill(6)]
+
+        full_ee_poses[str(start_idx).zfill(6)] = start_pose
+
+        gap = end_idx - start_idx
+        if gap > 1:
+            for j in range(1, gap):
+                alpha = j / gap
+                start_xyz = start_pose[:3]
+                end_xyz = end_pose[:3]
+                interp_xyz = (1 - alpha) * start_xyz + alpha * end_xyz
+                key_rots = R.from_quat(np.stack([start_pose[3:], end_pose[3:]]))
+                slerp = Slerp([0, 1], key_rots)
+                interp_quat = slerp([alpha]).as_quat()[0]
+                full_ee_poses[str(start_idx + j).zfill(6)] = np.concatenate([interp_xyz, interp_quat])
+
+    # Add the last pose
+    full_ee_poses[str(frame_indices[-1]).zfill(6)] = ee_poses[str(frame_indices[-1]).zfill(6)]
+
+    return full_ee_poses
 
 class HandPreprocessor:
     SAMPLE_RATE = 1
@@ -248,6 +290,7 @@ class HandPreprocessor:
         if cam_num == self.main_cam_idx:
             if hand_poss is not None:
                 hand_poss = smooth_hand_pose(hand_poss, skip_rate=self.SAMPLE_RATE)
+                hand_poss = interpolate_trajectory_gaps(hand_poss)
                 np.save(os.path.join(self.process_path, episode_name, f'hand_poses_wrt_world.npy'), hand_poss)
                 filter_grasp(os.path.join(self.process_path, episode_name), episode_path, hand_poss)
             else:
@@ -279,6 +322,8 @@ def filter_grasp(save_path, episode_path, hand_poses):
 # =================== Run all 3 camera views ===================
 if __name__ == "__main__":
     import argparse
+    import open3d as o3d
+    from scipy.spatial.transform import Rotation as R
 
     parser = argparse.ArgumentParser(description="Run PreprocessSinglePipeline on all three camera views.")
     parser.add_argument("--episode_path", type=str, required=True, help="Path to episode folder containing cam1, cam2, cam3")
