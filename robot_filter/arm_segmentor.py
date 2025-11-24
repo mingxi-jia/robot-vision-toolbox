@@ -437,7 +437,7 @@ class RobotArmSegmentation:
             transformed = mesh.copy()
             transformed.apply_transform(pose)
             transformed.apply_transform(self.T_world_urdf)  # transform to world frame
-            sampled_points.append(transformed.sample(2500))
+            sampled_points.append(transformed.sample(2000))
 
         robot_points = np.vstack(sampled_points)
 
@@ -446,7 +446,7 @@ class RobotArmSegmentation:
         robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
 
         # Filter scene points close to robot mesh
-        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.001)  # downsample for efficiency
+        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)  # downsample for efficiency
 
         robot_points_np = np.asarray(robot_pcd.points)  # Convert to numpy array for fast distance computation          
         scene_points_np = np.asarray(pcd.points)

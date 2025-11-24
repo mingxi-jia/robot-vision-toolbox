@@ -11,6 +11,7 @@ from hand.hand_utils import convert_state_to_action
 from robot_filter.arm_segmentor import RobotArmSegmentation
 from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose, convert_RGBD_fast)
 from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
+from tqdm import tqdm
 
 def save_pcd(pcd):
     pcd_o3d = o3d.geometry.PointCloud()
@@ -69,7 +70,7 @@ def convert_pose_from_robot_to_fingertip(ee_poses: dict) -> dict:
          
     return np.array(corrected_hand_poss)
 
-class PointCloudProcessor:
+class ObservationProcessor:
     """Processes point clouds for dataset conversion."""
 
     def __init__(self, workspace: np.ndarray=WORKSPACE, fix_point_num: int=MAX_POINT_NUM_HDF5, data_type: str="robot"):
@@ -138,6 +139,39 @@ class PointCloudProcessor:
             extra_choice = np.random.choice(point_num, self.fix_point_num - point_num, replace=True)
             pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
         return pcd
+    
+    def resize_image(self, image: np.ndarray, target_size: tuple[int, int]=(84,84)) -> np.ndarray:
+        h, w = image.shape[:2]
+        min_dim = min(h, w)
+        top = (h - min_dim) // 2
+        left = (w - min_dim) // 2
+        cropped = image[top:top+min_dim, left:left+min_dim]
+        if image.ndim == 2:  # depth image (single channel)
+            resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
+        else:  # RGB image (3 channels)
+            resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
+        return resized
+    
+    def localize_wrist_cam(self, rgb: np.ndarray, depth: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        depth_threshold = 0.3
+        mask = depth > depth_threshold
+        if np.mean(mask) > 0.5:
+            rgb = np.zeros_like(rgb)
+            depth = np.ones_like(depth) * depth_threshold
+        return rgb, depth
+    
+    def get_policy_images(self, rgb_dict: dict, depth_dict: dict) -> tuple[dict, dict]:
+        for cam in rgb_dict.keys():
+            rgb_resized = self.resize_image(rgb_dict[cam])
+            depth_resized = self.resize_image(depth_dict[cam])
+
+            if cam == 'cam4':
+                rgb_resized, depth_resized = self.localize_wrist_cam(rgb_resized, depth_resized)
+
+            rgb_dict[cam] = rgb_resized
+            depth_dict[cam] = depth_resized
+
+        return rgb_dict, depth_dict
             
     def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pose: np.ndarray) -> np.ndarray:
         """Get voxelized rendered point cloud with sphere.
@@ -157,15 +191,16 @@ class PointCloudProcessor:
     def get_policy_obs(self, pcd, pose, joint):
         np_pcd = self.process_raw_pcd(pcd, pose, render=False)
 
-        pcd_no_robot = self.robot_filter.segment(self.filter_pcd_by_workspace(np_pcd), joint)
+        np_pcd = self.filter_pcd_by_workspace(np_pcd)
+        pcd_no_robot = self.robot_filter.segment(np_pcd, joint)
         render_pcd = self.process_raw_pcd(pcd_no_robot, pose, render=True)
         return np_pcd, render_pcd
 
 class TrajectoryLoader:
     """Loads and processes trajectories from episodes."""
 
-    def __init__(self, real_dataset_path: str, process_path: str, data_type: str, camera_info_dict: dict,
-                 cam_list: list[str], main_cam: str, pcd_processor: PointCloudProcessor):
+    def __init__(self, real_dataset_path: str, process_path: str, data_type: str, camera_info: dict,
+                 cam_list: list[str], main_cam: str, obs_processor: ObservationProcessor):
         """Initialize loader.
 
         Args:
@@ -173,7 +208,7 @@ class TrajectoryLoader:
             process_path: Path to processed data
             cam_list: List of camera names
             main_cam: Main camera name
-            pcd_processor: PointCloudProcessor instance
+            obs_processor: ObservationProcessor instance
         """
 
         self.real_dataset_path = real_dataset_path
@@ -183,9 +218,9 @@ class TrajectoryLoader:
         self.pcd_cam_list = [cam for cam in cam_list if cam != 'cam4']
         print(f"Manually setting pcd cameras to: {self.pcd_cam_list} to exclude cam4 (wrist cam).")
         self.main_cam = main_cam
-        self.pcd_processor = pcd_processor
+        self.obs_processor = obs_processor
         self.data_type = data_type
-        self.camera_info = camera_info_dict
+        self.camera_info = camera_info
 
     def get_traj_length(self, episode_name: str) -> int:
         """Get trajectory length for episode.
@@ -331,16 +366,18 @@ class TrajectoryLoader:
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
         pcd_seq, render_pcd_seq, ee_pos_seq = [], [], []
 
-        for frame_idx, pose in enumerate(ee_poss):
+        for frame_idx, pose in tqdm(enumerate(ee_poss), total=traj_length, desc=f"Loading {episode_name}"):
             joint = joint_states[frame_idx][1:]
             pcd, rgbs, depths = self.get_pcd_from_rgbd(episode_path, frame_idx)
             
-            for cam in self.cam_list:
-                rgb_dict[f'{cam}_image'].append(rgbs[cam])
-                depth_dict[f'{cam}_depth'].append(depths[cam])
-
-            np_pcd, np_pcd_no_robot = self.pcd_processor.get_policy_obs(pcd, pose, joint)
+            rgbs, depths = self.obs_processor.get_policy_images(rgbs, depths)   
+            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint)
             
+
+            for cam in self.cam_list:
+                rgb, depth = rgbs[cam], depths[cam]
+                rgb_dict[f'{cam}_image'].append(rgb)
+                depth_dict[f'{cam}_depth'].append(depth)
             pcd_seq.append(np_pcd)
             render_pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
@@ -363,6 +400,11 @@ class TrajectoryLoader:
             'pcd': np.stack(pcd_seq),
             'render_pcd': np.stack(render_pcd_seq), 
         }
+        # rename cam4 to wrist_cam for clarity
+        if 'cam4_image' in rgb_dict:
+            rgb_dict['robot0_eye_in_hand_image'] = rgb_dict.pop('cam4_image')
+        if 'cam4_depth' in depth_dict:
+            depth_dict['robot0_eye_in_hand_depth'] = depth_dict.pop('cam4_depth')
 
         obss = {**rgb_dict, **depth_dict, **state_dict, **pcd_dict, 'pcd': np.stack(pcd_seq)}
 
@@ -399,8 +441,8 @@ class TrajectoryLoader:
                 rgb_dict[f'{cam}_image'].append(rgb)
                 depth_dict[f'{cam}_depth'].append(depth)
 
-            np_pcd = self.pcd_processor.process_raw_pcd(pcd, pose)
-            np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot, pose)
+            np_pcd = self.obs_processor.process_raw_pcd(pcd, pose)
+            np_pcd_no_robot = self.obs_processor.process_raw_pcd(pcd_no_robot, pose, render=True)
             
             pcd_seq.append(np_pcd)
             render_pcd_seq.append(np_pcd_no_robot)
