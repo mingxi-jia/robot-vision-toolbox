@@ -53,7 +53,10 @@ class RobotArmSegmentation:
             self.base_quat = np.array([1., 0., 0., 0.])
 
         if urdf_path is None:
-            urdf_path = "robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf"
+            # get current file path
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray.urdf")
+            # urdf_path = "robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf"
         self.load_urdf(urdf_path)
     
     def load_camera_metadata(self, camera_json_path):

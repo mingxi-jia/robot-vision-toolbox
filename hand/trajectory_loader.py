@@ -49,23 +49,58 @@ def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
         corrected_hand_poss[frame_idx] = hand_pos
     return corrected_hand_poss
 
+def convert_pose_from_robot_to_fingertip(ee_poses: dict) -> dict:
+    corrected_hand_poss = []
+    for frame_idx, hand_pos in enumerate(ee_poses):
+        # Apply corrective rotation (calculated from first frame)
+        hand_mat = np.eye(4)
+        hand_mat[:3, :3] = R.from_quat(hand_pos[3:]).as_matrix()
+        hand_mat[:3, 3] = hand_pos[:3]
 
+        # Apply fixed translation offset from robot EE to hand fingertip
+        eTf = np.eye(4)
+        eTf[:3,3] = np.array([0.0, 0.0, 0.06])
+
+        corrected_hand_mat = hand_mat @ eTf
+        hand_pos[:3] = corrected_hand_mat[:3, 3]
+        hand_pos[3:] = R.from_matrix(corrected_hand_mat[:3,:3]).as_quat()
+        hand_pos[2] = np.clip(hand_pos[2], 0.0, None)  # prevent z from going below 0
+        corrected_hand_poss.append(hand_pos)
+         
+    return np.array(corrected_hand_poss)
 
 class PointCloudProcessor:
     """Processes point clouds for dataset conversion."""
 
-    def __init__(self, workspace: np.ndarray=WORKSPACE, fix_point_num: int=MAX_POINT_NUM_HDF5, robomimic_center: np.ndarray=None):
+    def __init__(self, workspace: np.ndarray=WORKSPACE, fix_point_num: int=MAX_POINT_NUM_HDF5, data_type: str="robot"):
         """Initialize processor.
 
         Args:
             workspace: 3x2 array defining workspace boundaries
             fix_point_num: Target number of points after processing
-            robomimic_center: Center point for robomimic coordinate system
         """
         self.workspace = workspace
         self.fix_point_num = fix_point_num
-        self.robomimic_center = robomimic_center
+        if data_type == "robot":
+            self.robot_filter = RobotArmSegmentation()
 
+    def filter_pcd_by_workspace(self, pcd: np.ndarray) -> np.ndarray:
+        """Filter point cloud by workspace boundaries.
+
+        Args:
+            pcd: Input point cloud array (N, 6) with xyz and rgb
+
+        Returns:
+            Filtered point cloud array
+        """
+        pcd_np = pcd[np.where(
+            (pcd[:, 0] > self.workspace[0, 0]) & (pcd[:, 0] < self.workspace[0, 1]) &
+            (pcd[:, 1] > self.workspace[1, 0]) & (pcd[:, 1] < self.workspace[1, 1]) &
+            (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1])
+        )]
+        pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
+        return pcd_np
+    
     def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray=None, render: bool=False) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
         """Process raw point cloud.
 
@@ -73,16 +108,10 @@ class PointCloudProcessor:
             pcd: Raw point cloud array (N, 6) with xyz and rgb
 
         Returns:
-            Tuple of (processed numpy array, processed o3d point cloud)
+            processed numpy array
         """
         # Filter by workspace
-        pcd_np = pcd[np.where(
-            (pcd[:, 0] > self.workspace[0, 0]) & (pcd[:, 0] < self.workspace[0, 1]) &
-            (pcd[:, 1] > self.workspace[1, 0]) & (pcd[:, 1] < self.workspace[1, 1]) &
-            (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1])
-        )]
-        # filter z
-        pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
+        pcd_np = self.filter_pcd_by_workspace(pcd)
 
         point_num = pcd_np.shape[0]
         assert point_num > 0, "Too few points in the point cloud after filtering."
@@ -125,6 +154,13 @@ class PointCloudProcessor:
         return pcd_render
 
 
+    def get_policy_obs(self, pcd, pose, joint):
+        np_pcd = self.process_raw_pcd(pcd, pose, render=False)
+
+        pcd_no_robot = self.robot_filter.segment(self.filter_pcd_by_workspace(np_pcd), joint)
+        render_pcd = self.process_raw_pcd(pcd_no_robot, pose, render=True)
+        return np_pcd, render_pcd
+
 class TrajectoryLoader:
     """Loads and processes trajectories from episodes."""
 
@@ -139,8 +175,6 @@ class TrajectoryLoader:
             main_cam: Main camera name
             pcd_processor: PointCloudProcessor instance
         """
-        if data_type == "robot":
-            self.robot_filter = RobotArmSegmentation()
 
         self.real_dataset_path = real_dataset_path
         self.process_path = process_path
@@ -272,7 +306,8 @@ class TrajectoryLoader:
                 file_path = os.path.join(episode_path, "state", f)
                 if not os.path.exists(file_path):
                     raise FileNotFoundError(f"Required file {f} not found in episode {file_path}")
-
+    
+    
     def load_trajectory_robot(self, episode_name: str) -> dict:
         """Load robot trajectory.
 
@@ -287,6 +322,7 @@ class TrajectoryLoader:
         traj_length = self.get_traj_length(episode_name)
 
         ee_poss = np.load(os.path.join(episode_path, "state", "pose_wrt_world.npy"))
+        ee_poss = convert_pose_from_robot_to_fingertip(ee_poss)
         joint_states = np.load(os.path.join(episode_path, "state", "joint_states.npy"))
         grasps_state = np.load(os.path.join(episode_path, "state", "grasp.npy"))[:,None]
         assert len(ee_poss) == len(grasps_state), "Mismatch in ee_poss and grasps signals."
@@ -298,14 +334,12 @@ class TrajectoryLoader:
         for frame_idx, pose in enumerate(ee_poss):
             joint = joint_states[frame_idx][1:]
             pcd, rgbs, depths = self.get_pcd_from_rgbd(episode_path, frame_idx)
-            pcd_no_robot = self.robot_filter.segment(self.pcd_processor.process_raw_pcd(pcd, pose, render=False), joint)
             
             for cam in self.cam_list:
                 rgb_dict[f'{cam}_image'].append(rgbs[cam])
                 depth_dict[f'{cam}_depth'].append(depths[cam])
 
-            np_pcd = self.pcd_processor.process_raw_pcd(pcd, pose, render=False)
-            np_pcd_no_robot = self.pcd_processor.process_raw_pcd(pcd_no_robot, pose, render=True)
+            np_pcd, np_pcd_no_robot = self.pcd_processor.get_policy_obs(pcd, pose, joint)
             
             pcd_seq.append(np_pcd)
             render_pcd_seq.append(np_pcd_no_robot)

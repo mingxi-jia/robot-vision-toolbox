@@ -29,7 +29,6 @@ class RealToRobomimicConverter:
         self.real_dataset_path = real_dataset_path
         self.process_path = os.path.join(real_dataset_path, "output")
         self.robomimic_dataset_path = output_robomimic_path
-        self.robomimic_center = np.array([0, 0, 0.7])
 
         # Load episode and camera lists
         self.episode_list = [
@@ -53,10 +52,10 @@ class RealToRobomimicConverter:
 
         # Initialize components
         self.pcd_processor = PointCloudProcessor(
-            self.workspace, self.fix_point_num, self.robomimic_center
+            self.workspace, self.fix_point_num, data_type
         )
         self.trajectory_loader = TrajectoryLoader(
-            real_dataset_path, self.process_path, data_type, self.info_dict,
+            real_dataset_path, self.process_path, self.info_dict,
             cam_list, self.main_cam, self.pcd_processor
         )
 
