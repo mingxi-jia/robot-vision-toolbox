@@ -1,6 +1,7 @@
 """Trajectory loading and processing."""
 
 import os
+import time
 from matplotlib import axis
 import numpy as np
 import open3d as o3d
@@ -9,7 +10,8 @@ from scipy.spatial.transform import Rotation as R, Slerp
 from hand.hand_utils import convert_state_to_action
 
 from robot_filter.arm_segmentor import RobotArmSegmentation
-from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose, convert_RGBD_fast)
+from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose, convert_RGBD_fast,
+                             simple_downsample_for_fixed_scene)
 from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
 from tqdm import tqdm
 
@@ -115,25 +117,31 @@ class ObservationProcessor:
         pcd_np = self.filter_pcd_by_workspace(pcd)
 
         point_num = pcd_np.shape[0]
-        assert point_num > 0, "Too few points in the point cloud after filtering."
+        assert point_num >= 0, "Too few points in the point cloud after filtering."
 
         if render:
             assert pose is not None, "Pose must be provided for rendering."
             # render sphere
             pcd_np = self.get_render_pcd(pcd_np, pose)
         
-        pcd_np = self.downsample_pcd(pcd_np)
+        pcd_np = self.downsample_pcd(pcd_np, downsample_method='fps')
         return pcd_np
 
-    def downsample_pcd(self, pcd: np.ndarray) -> np.ndarray:
+    def downsample_pcd(self, pcd: np.ndarray, downsample_method: str = 'fps') -> np.ndarray:
         point_num = pcd.shape[0]
         if point_num >= self.fix_point_num:
             # Farthest point down sample
             pcd_o3d = o3d.geometry.PointCloud()
             pcd_o3d.points = o3d.utility.Vector3dVector(pcd[:, :3])
             pcd_o3d.colors = o3d.utility.Vector3dVector(pcd[:, 3:])
-            pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
+            if downsample_method == 'voxel':
+                pcd_o3d = simple_downsample_for_fixed_scene(pcd_o3d, self.fix_point_num, voxel_size=0.005)
+            elif downsample_method == 'fps':
+                pcd_o3d = pcd_o3d.farthest_point_down_sample(self.fix_point_num)
+            else:
+                raise ValueError(f"Unknown downsample method: {downsample_method}")
             pcd = o3d2np(pcd_o3d)
+            print(f"{pcd.shape}")
         else:
             # Upsample by random selection
             extra_choice = np.random.choice(point_num, self.fix_point_num - point_num, replace=True)
@@ -189,11 +197,25 @@ class ObservationProcessor:
 
 
     def get_policy_obs(self, pcd, pose, joint):
+        t0 = time.time()
         np_pcd = self.process_raw_pcd(pcd, pose, render=False)
+        t_raw_pcd_process = time.time() - t0
 
+        t0 = time.time()
         np_pcd = self.filter_pcd_by_workspace(np_pcd)
+        t_filtered_pcd_process = time.time() - t0
+        t0 = time.time()
         pcd_no_robot = self.robot_filter.segment(np_pcd, joint)
+        t_segment_process = time.time() - t0
+        t0 = time.time()
         render_pcd = self.process_raw_pcd(pcd_no_robot, pose, render=True)
+        t_render_pcd_process = time.time() - t0
+
+        print(f"\n=== Get Policy obs Timings ===")
+        print(f"Raw PCD processing time: {t_raw_pcd_process:.4f}s")
+        print(f"Filtered PCD processing time: {t_filtered_pcd_process:.4f}s")
+        print(f"Segmentation time: {t_segment_process:.4f}s")
+        print(f"Render PCD processing time: {t_render_pcd_process:.4f}s")
         return np_pcd, render_pcd
 
 class TrajectoryLoader:

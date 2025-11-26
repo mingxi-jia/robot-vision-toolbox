@@ -17,38 +17,8 @@ from concurrent.futures import ThreadPoolExecutor
 frame_cache = {}
 preload_cache = {}
 
-from utils.pcd_utils import get_extrinsics_matrix
+from utils.pcd_utils import get_extrinsics_matrix, simple_downsample_for_fixed_scene
 
-def simple_downsample_for_fixed_scene(pcd: o3d.geometry.PointCloud, 
-                                    target_points: int = 4412,
-                                    voxel_size: float = 0.01) -> o3d.geometry.PointCloud:
-    """
-    Simple two-stage downsampling: voxel downsample first, then precise control
-    
-    Args:
-        pcd: Input point cloud
-        target_points: Target number of points (default 4412)
-        voxel_size: Voxel size in meters (default 0.01m = 1cm)
-    
-    Returns:
-        Downsampled point cloud
-    """
-    if len(pcd.points) <= target_points:
-        return pcd
-    
-    # Stage 1: Voxel downsampling for fast point reduction
-    voxel_pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
-    
-    # Stage 2: Precise control to target number of points
-    if len(voxel_pcd.points) > target_points:
-        # If still too many points, random downsample to target
-        sampling_ratio = target_points / len(voxel_pcd.points)
-        final_pcd = voxel_pcd.random_down_sample(sampling_ratio=sampling_ratio)
-    else:
-        # If voxel downsampling already reduced below target, return as is
-        final_pcd = voxel_pcd
-    
-    return final_pcd
 
 
 def find_optimal_voxel_size(test_pcd: o3d.geometry.PointCloud, 
