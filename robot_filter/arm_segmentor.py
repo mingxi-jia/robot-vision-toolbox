@@ -466,6 +466,73 @@ class RobotArmSegmentation:
         robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.01)
         robot_points_np = np.asarray(robot_pcd.points)
         return robot_points_np
+    
+    def get_gripper_pcd(self, finger_width=0.04):
+        """
+        Get point cloud of the gripper (hand + finray fingers + wrist camera).
+
+        Args:
+            finger_width: Distance between fingers (0.0 = closed, 0.04 = fully open)
+
+        Returns:
+            numpy array of shape (N, 3) representing gripper point cloud in gripper frame
+        """
+        # Load gripper URDF if not already loaded
+        if not hasattr(self, '_gripper_urdf') or self._gripper_urdf is None:
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            gripper_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_gripper_wrist.urdf")
+
+            with open(gripper_urdf_path, 'r') as f:
+                urdf_content = f.read()
+
+            # Get the package directory
+            urdf_dir = os.path.dirname(os.path.abspath(gripper_urdf_path))
+            package_dir = os.path.dirname(urdf_dir)
+
+            # Replace package:// URIs with absolute paths
+            urdf_str = urdf_content.replace("package://panda_description", package_dir)
+
+            with tempfile.NamedTemporaryFile(mode="w+", suffix=".urdf", delete=False) as f:
+                f.write(urdf_str)
+                f.flush()
+                self._gripper_urdf = URDF.load(f.name)
+                temp_file_path = f.name
+
+            # Clean up
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+
+        # Set up joint configuration for gripper
+        # The gripper has two prismatic joints that move symmetrically
+        joint_angles = {
+            'panda_finger_joint1': finger_width / 2.0,  # Each finger moves half the total width
+            'panda_finger_joint2': finger_width / 2.0   # Mimic joint
+        }
+
+        # Get visual meshes with forward kinematics
+        gripper_mesh_dict = self._gripper_urdf.visual_trimesh_fk(cfg=joint_angles)
+
+        # Sample points from each mesh
+        sampled_points = []
+        for mesh, pose in gripper_mesh_dict.items():
+            transformed = mesh.copy()
+            transformed.apply_transform(pose)
+            # Sample points - origin is already at panda_hand frame (gripper center)
+            sampled_points.append(transformed.sample(self.num_samples))
+
+        if not sampled_points:
+            return np.array([]).reshape(0, 3)
+
+        gripper_points = np.vstack(sampled_points)
+
+        # Create Open3D point cloud and downsample for efficiency
+        gripper_pcd = o3d.geometry.PointCloud()
+        gripper_pcd.points = o3d.utility.Vector3dVector(gripper_points)
+        gripper_pcd = gripper_pcd.voxel_down_sample(voxel_size=0.005)
+
+        return np.asarray(gripper_pcd.points)
 
     def segment(self, original_pcd, joints):
         """
