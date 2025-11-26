@@ -225,6 +225,7 @@ def main():
 
     # Add coordinate frames for trajectory
     num_frames_shown = 0
+    print(poses[:,2].min(), poses[:,2].max())
     for i in range(0, len(poses), args.subsample):
         pose_7d = poses[i]
         pose_mat = pose_7d_to_matrix(pose_7d)
