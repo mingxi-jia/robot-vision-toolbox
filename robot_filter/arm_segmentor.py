@@ -2,7 +2,8 @@
 
 import time
 import os
-import copy 
+import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils.pcd_utils import convert_RGBD_to_open3d
 os.environ["MUJOCO_GL"] = "osmesa"
@@ -16,18 +17,39 @@ import imageio.v2 as imageio
 import json
 from scipy.spatial.transform import Rotation as R
 from scipy.spatial import cKDTree
+from utils.visualization import visualize_pcds
+import trimesh
 
 # take the camera data out of the function
 # make this into a class that can be reused, so the camera data is stored in the class
 # and the function can be called with different rgb, depth, and joints
 # class RobotArmSegmentation:
+joint_thresholds = {
+    "panda_link0": 0.08,
+    "panda_link1": 0.08,
+    "panda_link2": 0.08,
+    "panda_link3": 0.08,
+    "panda_link4": 0.08,
+    "panda_link5": 0.08,
+    "panda_link6": 0.08,
+    "panda_link7": 0.08,
+    "panda_link8": 0.08,
+    "panda_hand": 0.04,
+    "panda_leftfinger": 0.03,
+    "panda_rightfinger": 0.03,
+}
+
 class RobotArmSegmentation:
-    def __init__(self, is_simulation=False, joint_thresholds=None):
+    def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds, urdf_path=None, num_samples=1000):
         self.robot_urdf = None
         self.robot_urdf = None
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
-        self.joint_thresholds = joint_thresholds if joint_thresholds is not None else {}
+        self.joint_thresholds = joint_thresholds
+        self.filter_threshold = 0.03
+        self.num_samples = num_samples
+        self._pre_sampled_points = None  # Will be lazily initialized
+        self._mesh_id_map = None  # Maps mesh id to index for consistent ordering
 
         if is_simulation:
             self.base_pose = np.array([-0.56, 0., 0.912])
@@ -35,6 +57,14 @@ class RobotArmSegmentation:
         else:
             self.base_pose = np.array([0., 0., 0.])
             self.base_quat = np.array([1., 0., 0., 0.])
+
+        if urdf_path is None:
+            # get current file path
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            # urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray.urdf")
+            urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray_wrist.urdf")
+            # urdf_path = "robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf"
+        self.load_urdf(urdf_path)
     
     def load_camera_metadata(self, camera_json_path):
         with open(camera_json_path, 'r') as f:
@@ -63,6 +93,31 @@ class RobotArmSegmentation:
         intrinsics.set_intrinsics(width, height, fx, fy, cx, cy)
         return intrinsics, extrinsics
     
+    def _init_pre_samples(self):
+        """Pre-sample points from each mesh in local/body frame (zero configuration)."""
+        print("Initializing pre-sampled robot mesh points...")
+        t0 = time.time()
+
+        # Use zero configuration for sampling
+        joint_names = sorted([j.name for j in self.robot_urdf.actuated_joints])
+        zero_cfg = {name: 0.0 for name in joint_names}
+
+        # Get meshes at zero configuration
+        fk_zero = self.robot_urdf.visual_trimesh_fk(cfg=zero_cfg)
+
+        # Sample points in local frame and store by mesh id
+        self._pre_sampled_points = {}
+        self._mesh_id_map = {}
+
+        for idx, (geom, pose) in enumerate(fk_zero.items()):
+            # Sample points in local/body frame
+            pts = geom.sample(self.num_samples)
+            mesh_id = id(geom)
+            self._pre_sampled_points[mesh_id] = pts
+            self._mesh_id_map[mesh_id] = idx
+
+        print(f"Pre-sampling completed in {time.time() - t0:.4f}s for {len(self._pre_sampled_points)} meshes")
+
     #load urdf as part of the class as well
     def load_urdf(self, urdf_path):
         with open(urdf_path, 'r') as f:
@@ -275,123 +330,203 @@ class RobotArmSegmentation:
 
 
 
-    def segment(self, original_pcd, joints):
-        # Handle both Open3D PointCloud and numpy array inputs
-        if isinstance(original_pcd, o3d.geometry.PointCloud):
-            pcd = original_pcd
-        else:
-            # Assume it's a numpy array
-            assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
-            pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
+    # def segment(self, original_pcd, joints):
+    #     # Handle both Open3D PointCloud and numpy array inputs
+    #     if isinstance(original_pcd, o3d.geometry.PointCloud):
+    #         pcd = original_pcd
+    #     else:
+    #         # Assume it's a numpy array
+    #         assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
+    #         pcd = o3d.geometry.PointCloud()
+    #         pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
+    #         pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])
 
-        # pcd = tsdf_volume.extract_point_cloud()
-        # pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
+    #     # Load URDF and create a mesh for the robot arm
+    #     if not hasattr(self, 'robot_urdf'):
+    #         raise ValueError("URDF not loaded. Use load_urdf() to load it.")
 
-        # Load URDF and create a mesh for the robot arm
-        if not hasattr(self, 'robot_urdf'):
-            raise ValueError("URDF not loaded. Use load_urdf() to load it.")
+    #     # Get joint angles
+    #     joint_names = [j.name for j in self.robot_urdf.actuated_joints]
+    #     joint_positions = joints
+    #     joint_angles = dict(zip(joint_names, joint_positions))
 
-        # Get joint angles from simulation
-        joint_names = [j.name for j in self.robot_urdf.actuated_joints]
-        joint_positions = joints  # robosuite joint angles
+    #     # Get link forward kinematics
+    #     link_fk = self.robot_urdf.link_fk(cfg=joint_angles)
 
-        # Map names to values
+    #     scene_points_np = np.asarray(pcd.points)
+    #     mask_dict = {}
+
+    #     # Iterate over each link and apply per-link filtering
+    #     for link_idx, link in enumerate(self.robot_urdf.links):
+    #         # if link.name not in link_fk:
+    #         #     continue  # Skip links not in FK (fixed/non-actuated)
+            
+    #         link_item_name_fk = list(link_fk.keys())[link_idx]
+    #         print(f"link_item_name_fk: {link_item_name_fk}")
+    #         link_samples = []
+    #         # Process each visual geometry in this link
+    #         for visual in link.visuals:
+    #             if visual.geometry.mesh is None:
+    #                 continue
+
+    #             try:
+    #                 # Get ALL meshes for this visual (can be multiple per visual element)
+    #                 for mesh in visual.geometry.mesh.meshes:
+    #                     mesh_copy = mesh.copy()
+
+    #                     # Apply visual origin offset (if any)
+    #                     print(f"visual.origin: {visual.origin}")
+
+
+    #                     if visual.origin is not None:
+    #                         mesh_copy.apply_transform(visual.origin)
+
+    #                     # Apply link transform from FK
+    #                     mesh_copy.apply_transform(link_fk[link_item_name_fk])
+
+    #                     # Apply world transform
+    #                     print(f"Applying world transform: {self.T_world_urdf}")
+    #                     mesh_copy.apply_transform(self.T_world_urdf)
+
+    #                     # Sample points from the transformed mesh
+    #                     link_samples.append(mesh_copy.sample(2500))
+    #                     print(f"Sampling {link.name} visual mesh with {len(mesh_copy.vertices)} vertices")
+    #             except Exception as e:
+    #                 print(f"Warning: Could not process visual for link {link.name}: {e}")
+    #                 continue
+
+    #         if not link_samples:
+    #             continue  # No valid meshes for this link
+
+    #         # Combine all mesh samples for this link
+    #         link_points = np.vstack(link_samples)
+    #         robot_pcd = o3d.geometry.PointCloud()
+    #         robot_pcd.points = o3d.utility.Vector3dVector(link_points)
+    #         robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)
+
+    #         # Get threshold for this link (use link name as key)
+    #         FILTER_THRESH = self.joint_thresholds.get(link.name, 0.02)
+    #         print(f"Filtering with threshold {FILTER_THRESH:.4f} for link '{link.name}'")
+
+    #         robot_points_np = np.asarray(robot_pcd.points)
+    #         if len(robot_points_np) == 0:
+    #             continue
+
+    #         # Build KDTree and query distances
+    #         link_tree = cKDTree(robot_points_np)
+    #         dists, _ = link_tree.query(scene_points_np)
+    #         kept_mask = dists > FILTER_THRESH
+    #         mask_dict[link.name] = kept_mask
+
+    #     if not mask_dict:
+    #         print("Warning: No link masks created, returning original point cloud")
+    #         return np.concatenate((scene_points_np, np.asarray(pcd.colors)), axis=1)
+
+    #     # Combine all masks - keep point only if it's far from ALL links
+    #     combined_mask = np.ones(len(scene_points_np), dtype=bool)
+    #     for link_name, mask in mask_dict.items():
+    #         combined_mask = combined_mask & mask
+
+    #     kept = scene_points_np[combined_mask]
+    #     print(f"Filtered: {len(scene_points_np)} -> {len(kept)} points ({100*len(kept)/len(scene_points_np):.1f}% remaining)")
+
+    #     filtered_pcd = np.concatenate((kept, np.asarray(pcd.colors)[combined_mask]), axis=1)
+    #     return filtered_pcd
+
+    def get_robot_pcd(self, joints):
+        # Get joint angles and compute FK
+        joint_names = sorted([j.name for j in self.robot_urdf.actuated_joints])
+        joint_positions = joints
         joint_angles = dict(zip(joint_names, joint_positions))
 
-        # Compute transformed robot meshes
-        robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)  # returns mesh, transformation matrix relative to base
+        # Compute FK at current configuration
+        robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)
 
-        # Sample points from each mesh 
-        sampled_points = []
-        for mesh, pose in robot_mesh_dict.items():
-            transformed = mesh.copy()
-            transformed.apply_transform(pose)
-            transformed.apply_transform(self.T_world_urdf)  # transform to world frame
-            sampled_points.append(transformed.sample(2500))
+        # Transform pre-sampled points (NO resampling!)
+        robot_points_list = []
+        for geom, pose in robot_mesh_dict.items():
+            mesh_id = id(geom)
+            if mesh_id not in self._pre_sampled_points:
+                # Fallback: this shouldn't happen if pre-sampling worked correctly
+                print(f"Warning: mesh {mesh_id} not found in pre-sampled points, sampling on-the-fly")
+                local_pts = geom.sample(self.num_samples)
+            else:
+                local_pts = self._pre_sampled_points[mesh_id]
 
-        scene_points_np = np.asarray(pcd.points)
-        mask_dict = {}
-        for joint_name, joint_points in zip(joint_names, sampled_points):
-            robot_pcd = o3d.geometry.PointCloud()
-            robot_pcd.points = o3d.utility.Vector3dVector(joint_points)
-            robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)
-            FILTER_THRESH = self.joint_thresholds.get(joint_name, 0.02)
-            print(f"Filtering with threshold {FILTER_THRESH} for joint {joint_name}")
-            robot_points_np = np.asarray(robot_pcd.points) 
-            joint_tree = cKDTree(robot_points_np)
-            dists, _ = joint_tree.query(scene_points_np)
-            kept_mask = dists > FILTER_THRESH
-            mask_dict[joint_name] = kept_mask
+            # Apply FK pose then world transform: T_world * pose * p_local
+            T = self.T_world_urdf @ pose
+            pts_world = trimesh.transformations.transform_points(local_pts, T)
+            robot_points_list.append(pts_world)
 
-        # Combine all masks
-        combined_mask = np.ones(len(scene_points_np), dtype=bool)
-        for joint_name, mask in mask_dict.items():
-            combined_mask = combined_mask & mask
-        kept = scene_points_np[combined_mask]
-        filtered_pcd = np.concatenate((np.asarray(kept), np.asarray(pcd.colors)[combined_mask]), axis=1)
-        return filtered_pcd
-    
+        robot_points = np.vstack(robot_points_list)
 
-    def segment(self, original_pcd, joints):
-        # Handle both Open3D PointCloud and numpy array inputs
-        if isinstance(original_pcd, o3d.geometry.PointCloud):
-            pcd = original_pcd
-        else:
-            # Assume it's a numpy array
-            assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
-            pcd = o3d.geometry.PointCloud()
-            pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
-            pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])   
-
-        # pcd = tsdf_volume.extract_point_cloud()
-        # pcd = pcd.voxel_down_sample(voxel_size=0.02)  # Downsample for efficiency
-
-        # Load URDF and create a mesh for the robot arm
-        if not hasattr(self, 'robot_urdf'):
-            raise ValueError("URDF not loaded. Use load_urdf() to load it.")
-
-        # Get joint angles from simulation
-        joint_names = [j.name for j in self.robot_urdf.actuated_joints]
-        joint_positions = joints  # robosuite joint angles
-
-        # Map names to values
-        joint_angles = dict(zip(joint_names, joint_positions))
-
-        # Compute transformed robot meshes
-        robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)  # returns mesh, transformation matrix relative to base
-
-        # Sample points from each mesh surface
-        sampled_points = []
-        for mesh, pose in robot_mesh_dict.items():
-            transformed = mesh.copy()
-            transformed.apply_transform(pose)
-            transformed.apply_transform(self.T_world_urdf)  # transform to world frame
-            sampled_points.append(transformed.sample(2500))
-
-        robot_points = np.vstack(sampled_points)
-
-        # Create Open3D point cloud for KDTree
+        # Downsample robot points for efficiency
         robot_pcd = o3d.geometry.PointCloud()
         robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
+        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.01)
+        robot_points_np = np.asarray(robot_pcd.points)
+        return robot_points_np
 
-        # Filter scene points close to robot mesh
-        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)  # downsample for efficiency
+    def segment(self, original_pcd, joints):
+        """
+        Segment robot arm from point cloud using pre-sampled mesh points.
 
-        FILTER_THRESH = 0.05
-        robot_points_np = np.asarray(robot_pcd.points)  # Convert to numpy array for fast distance computation          
+        Args:
+            original_pcd: Input point cloud (Open3D PointCloud or numpy array Nx6)
+            joints: Joint angles for the robot
+            downsample_scene: If True, downsample scene point cloud before filtering
+            scene_voxel_size: Voxel size for scene downsampling (only used if downsample_scene=True)
+
+        Returns:
+            Filtered point cloud as numpy array (Nx6)
+        """
+        t_start = time.time()
+
+        # Lazy initialization of pre-sampled points
+        if self._pre_sampled_points is None:
+            self._init_pre_samples()
+        t_init = time.time()
+
+        # Handle both Open3D PointCloud and numpy array inputs
+        if isinstance(original_pcd, o3d.geometry.PointCloud):
+            pcd = original_pcd
+        else:
+            # Assume it's a numpy array
+            assert original_pcd.shape[1] == 6, "Input point cloud must be of shape (N, 6)"
+            pcd = o3d.geometry.PointCloud()
+            pcd.points = o3d.utility.Vector3dVector(original_pcd[:, :3])
+            pcd.colors = o3d.utility.Vector3dVector(original_pcd[:, 3:6])
+
+        pcd = pcd.voxel_down_sample(voxel_size=0.01)
+
+        t_pcd_prep = time.time()
+
+        # Load URDF check
+        if not hasattr(self, 'robot_urdf'):
+            raise ValueError("URDF not loaded. Use load_urdf() to load it.")
+
+        robot_points_np = self.get_robot_pcd(joints)
+
+        # Get scene points
         scene_points_np = np.asarray(pcd.points)
-        
-        # Use scipy.spatial.cKDTree for efficient vectorized distance queries
+        scene_colors_np = np.asarray(pcd.colors)
+
+        # KDTree distance filtering
         robot_tree = cKDTree(robot_points_np)
-        # Query for the minimum distance from each scene point to the robot mesh points
         dists, _ = robot_tree.query(scene_points_np)
-        kept_mask = dists > FILTER_THRESH
-        kept = scene_points_np[kept_mask]
-        
-        # filtered_pcd = o3d.geometry.PointCloud()
-        # filtered_pcd.points = o3d.utility.Vector3dVector(np.asarray(kept))
-        # filtered_pcd.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors)[kept_mask])  # Keep original colors
-        filtered_pcd = np.concatenate((np.asarray(kept), np.asarray(pcd.colors)[kept_mask]), axis=1)
+        kept_mask = dists > self.filter_threshold
+        t_filter = time.time()
+
+        # Create filtered point cloud
+        filtered_pcd = np.concatenate(
+            (scene_points_np[kept_mask], scene_colors_np[kept_mask]),
+            axis=1
+        )
+
+        # Timing report
+        print(f"\n=== TIMING [segment - optimized] ===")
+        print(f"Pre-sampling init: {t_init - t_start:.6f} seconds")
+        print(f"PCD preparation: {t_pcd_prep - t_init:.6f} seconds")
+        print(f"Total: {t_filter - t_start:.6f} seconds")
+
         return filtered_pcd

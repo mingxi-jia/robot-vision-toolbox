@@ -12,15 +12,14 @@ import numpy as np
 from tqdm import tqdm
 from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
 from hand.hand_utils import load_camera_info_dict
-from hand.trajectory_loader import PointCloudProcessor
-from hand.hand_preprocessor import HandPreprocessor
+from hand.trajectory_loader import ObservationProcessor
 from hand.trajectory_loader import TrajectoryLoader
 
 
 class RealToRobomimicConverter:
     """Converts real dataset to robomimic format."""
 
-    def __init__(self, real_dataset_path: str, output_robomimic_path: str):
+    def __init__(self, real_dataset_path: str, output_robomimic_path: str, data_type: str = "hand") -> None:
         """Initialize converter.
 
         Args:
@@ -30,7 +29,6 @@ class RealToRobomimicConverter:
         self.real_dataset_path = real_dataset_path
         self.process_path = os.path.join(real_dataset_path, "output")
         self.robomimic_dataset_path = output_robomimic_path
-        self.robomimic_center = np.array([0, 0, 0.7])
 
         # Load episode and camera lists
         self.episode_list = [
@@ -48,24 +46,28 @@ class RealToRobomimicConverter:
         self.main_cam = f'cam{main_cam_idx}'
         self.workspace = WORKSPACE
         self.fix_point_num = MAX_POINT_NUM_HDF5
-        obs_type = 'pcd'
 
         # Load camera info
         self.info_dict = load_camera_info_dict(os.path.join('configs', "camera_info.yaml"))
 
         # Initialize components
-        self.pcd_processor = PointCloudProcessor(
-            self.workspace, self.fix_point_num, self.robomimic_center
+        self.pcd_processor = ObservationProcessor(
+            self.workspace, self.fix_point_num, data_type
         )
-        self.hand_preprocessor = HandPreprocessor(real_dataset_path, self.info_dict, main_cam_idx)
         self.trajectory_loader = TrajectoryLoader(
-            real_dataset_path, self.process_path, obs_type,
+            real_dataset_path, self.process_path, data_type, self.info_dict,
             cam_list, self.main_cam, self.pcd_processor
         )
 
+        self.data_type = data_type
         # Run preprocessing
-        print(f"Extracting actions from real dataset using HAMER...")
-        self.hand_preprocessor.preprocess_all(self.episode_list)
+        if data_type == "hand":
+            from hand.hand_preprocessor import HandPreprocessor
+            print(f"Extracting actions from real dataset using HAMER...")
+            self.hand_preprocessor = HandPreprocessor(real_dataset_path, self.info_dict, main_cam_idx)
+            self.hand_preprocessor.preprocess_all(self.episode_list)
+        else:
+            print(f"Skipping HAMER preprocessing for data type: {data_type}")
 
     def convert(self) -> None:
         """Convert dataset to robomimic format."""
@@ -118,11 +120,19 @@ def main():
         required=True,
         help="Output path for the robomimic HDF5 file."
     )
+    parser.add_argument(
+        "--data_type",
+        type=str,
+        required=True,
+        choices=["hand", "robot"],
+        help="Data type to convert (hand or robot)."
+    )
     args = parser.parse_args()
-    input("Ensure that all your hand trajectories always start with the default robot pose (Euler XYZ [180, 0, 0]) because this script is handling pose by enforcing this. Press Enter to continue...")
+    print("Ensure that all your hand trajectories always start with the default robot pose (Euler XYZ [180, 0, 0]) because this script is handling pose by enforcing this. ")
     converter = RealToRobomimicConverter(
         real_dataset_path=args.real_dataset_path,
-        output_robomimic_path=args.output_robomimic_path
+        output_robomimic_path=args.output_robomimic_path,
+        data_type=args.data_type,
     )
     converter.convert()
 

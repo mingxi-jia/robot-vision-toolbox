@@ -26,7 +26,9 @@ python hand/main.py \
 
 ```bash
 python scripts/play_pcd_sequence.py /home/mingxi/data/realworld/hand_rotation_test_strict/output/episode_0/pcd --fps=20 --loop
+# export DISPLAY=:1 if  GLFW Error: X11: Failed to open display :0
 ```
+
 
 ## Components
 

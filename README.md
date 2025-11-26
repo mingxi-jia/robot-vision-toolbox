@@ -7,8 +7,9 @@ conda activate robotool
 # 1. install real-time video segmentor
 ```
 # install the cuda version torch (tested on cuda 12.4)
-mamba install pytorch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 pytorch-cuda=12.4 -c pytorch -c nvidia
-pip install mediapipe==0.10.14 pykalman h5py open3d supervision h5py supervision pykalman
+conda install cuda -c nvidia/label/cuda-12.4.0
+pip install torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu124
+pip install mediapipe==0.10.14 pykalman h5py open3d supervision h5py supervision pykalman ninja
 
 # install realtime sam
 git clone https://github.com/Gy920/segment-anything-2-real-time.git ./submodules/segment-anything-2-real-time
@@ -28,7 +29,7 @@ Hamer pipeline needs the video segmentor above.
 # install hamer
 git clone --recursive https://github.com/geopavlakos/hamer.git ./submodules/hamer
 cd ./submodules/hamer
-pip install -e .[all]
+pip install --no-build-isolation -e .[all]
 pip install -v -e third-party/ViTPose
 bash fetch_demo_data.sh
 cd ../..
@@ -46,7 +47,7 @@ VIT_DIR = os.path.join(ROOT_DIR, "submodules/hamer/third-party/ViTPose")
 Besides these files, you also need to download the MANO model. Please visit the MANO website and register to get access to the downloads section. We only require the right hand model. [MANO_RIGHT.pkl](https://mano.is.tue.mpg.de/) under the _DATA/data/mano folder.
 ```
 # change hamer camera parameter (VERY IMPORTANT)
-# in ./submodules/hamer/_DATA/hamer_ckpts/model_config.yaml
+# in ./_DATA/hamer_ckpts/model_config.yaml
 [Line 59] FOCAL_LENGTH: 5000 -> FOCAL_LENGTH: 389 # for example
 ```
 # 3. run the data processor

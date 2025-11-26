@@ -1,5 +1,6 @@
 
 import json
+from typing import Dict
 import numpy as np
 import matplotlib.pyplot as plt
 from pykalman import KalmanFilter
@@ -402,6 +403,87 @@ def smooth_hand_pose_json(json_path, skip_rate=1):
         json.dump(smoothed_data, f, indent=2)
     return hand_poss
 
+def smooth_hand_pose(hand_poss: Dict, skip_rate=1):
+    """
+    Smooth hand poses by filtering jumps and applying weighted moving average.
+
+    Args:
+        hand_poss: Dict of frame_id -> np.array([tx, ty, tz, qx, qy, qz, qw])
+        skip_rate: Scaling factor for jump thresholds
+
+    Returns:
+        Dict of smoothed hand poses (same format as input)
+    """
+    if len(hand_poss) == 0:
+        return hand_poss
+
+    # Sort by frame ID (extract numeric part)
+    sorted_items = sorted(hand_poss.items(), key=lambda x: int(''.join(filter(str.isdigit, x[0]))))
+
+    # Separate into lists for processing
+    frame_ids = []
+    cam_ts = []
+    rot_mats = []
+
+    for fid, pose in sorted_items:
+        frame_ids.append(fid)
+        cam_ts.append(pose[:3])  # translation
+        # Convert quaternion to rotation matrix
+        quat = pose[3:]  # [qx, qy, qz, qw]
+        rot_mat = R.from_quat(quat).as_matrix()
+        rot_mats.append(rot_mat)
+
+    # Filter frames (remove jumps)
+    filtered_ids = []
+    filtered_ts = []
+    filtered_rots = []
+
+    last_valid_t = None
+    last_valid_r = None
+    max_axis_jump = 0.3 * skip_rate  # meters per axis
+    max_angle_jump = 65  # degrees
+
+    for i, (fid, cam_t, rot_mat) in enumerate(zip(frame_ids, cam_ts, rot_mats)):
+        keep = True
+
+        if last_valid_t is not None:
+            delta_axis = np.abs(cam_t - last_valid_t)
+            if np.any(delta_axis > max_axis_jump):
+                print(f"[DEBUG] Skipping {fid}: large axis translation jump {delta_axis}")
+                keep = False
+
+        if last_valid_r is not None:
+            delta_rot = R.from_matrix(last_valid_r).inv() * R.from_matrix(rot_mat)
+            angle_rad = np.linalg.norm(delta_rot.as_rotvec())
+            angle = np.degrees(angle_rad)
+            if angle > max_angle_jump:
+                print(f"[DEBUG] Skipping {fid}: large orientation jump ({angle:.1f} deg)")
+                keep = False
+
+        if keep:
+            filtered_ids.append(fid)
+            filtered_ts.append(cam_t)
+            filtered_rots.append(rot_mat)
+            last_valid_t = cam_t
+            last_valid_r = rot_mat
+
+    if len(filtered_ts) == 0:
+        return {}
+
+    # Convert to arrays
+    filtered_ts = np.array(filtered_ts)
+    filtered_rots = np.array(filtered_rots)
+
+    # Smooth translation with weighted moving average (small window)
+    smoothed_ts = weighted_moving_average(filtered_ts, window_size=3)
+
+    # Reconstruct the dict with smoothed values
+    smoothed_hand_poss = {}
+    for i, fid in enumerate(filtered_ids):
+        quat = R.from_matrix(filtered_rots[i]).as_quat()
+        smoothed_hand_poss[fid] = np.concatenate([smoothed_ts[i], quat])
+
+    return smoothed_hand_poss
 
 # === Example use ===
 if __name__ == "__main__":

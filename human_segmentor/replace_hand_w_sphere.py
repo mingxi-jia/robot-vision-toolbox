@@ -16,7 +16,7 @@ import sys
 sys.path.append('./')
 from human_segmentor.util import convert_images_to_video, get_first_frame
 from util import convert_images_to_video
-os.environ["PYOPENGL_PLATFORM"] = "egl"  # or "osmesa" if EGL fails
+# os.environ["PYOPENGL_PLATFORM"] = "egl"  # or "osmesa" if EGL fails
 LIGHT_BLUE=(0.65098039,  0.74117647,  0.85882353)
 scene_bg_color = (0, 0, 0)
 
