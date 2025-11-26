@@ -61,7 +61,7 @@ class RobotArmSegmentation:
         if urdf_path is None:
             # get current file path
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray.urdf")
+            # urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray.urdf")
             urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray_wrist.urdf")
             # urdf_path = "robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf"
         self.load_urdf(urdf_path)
@@ -432,7 +432,40 @@ class RobotArmSegmentation:
 
     #     filtered_pcd = np.concatenate((kept, np.asarray(pcd.colors)[combined_mask]), axis=1)
     #     return filtered_pcd
-    
+
+    def get_robot_pcd(self, joints):
+        # Get joint angles and compute FK
+        joint_names = sorted([j.name for j in self.robot_urdf.actuated_joints])
+        joint_positions = joints
+        joint_angles = dict(zip(joint_names, joint_positions))
+
+        # Compute FK at current configuration
+        robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)
+
+        # Transform pre-sampled points (NO resampling!)
+        robot_points_list = []
+        for geom, pose in robot_mesh_dict.items():
+            mesh_id = id(geom)
+            if mesh_id not in self._pre_sampled_points:
+                # Fallback: this shouldn't happen if pre-sampling worked correctly
+                print(f"Warning: mesh {mesh_id} not found in pre-sampled points, sampling on-the-fly")
+                local_pts = geom.sample(self.num_samples)
+            else:
+                local_pts = self._pre_sampled_points[mesh_id]
+
+            # Apply FK pose then world transform: T_world * pose * p_local
+            T = self.T_world_urdf @ pose
+            pts_world = trimesh.transformations.transform_points(local_pts, T)
+            robot_points_list.append(pts_world)
+
+        robot_points = np.vstack(robot_points_list)
+
+        # Downsample robot points for efficiency
+        robot_pcd = o3d.geometry.PointCloud()
+        robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
+        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.01)
+        robot_points_np = np.asarray(robot_pcd.points)
+        return robot_points_np
 
     def segment(self, original_pcd, joints):
         """
@@ -472,39 +505,7 @@ class RobotArmSegmentation:
         if not hasattr(self, 'robot_urdf'):
             raise ValueError("URDF not loaded. Use load_urdf() to load it.")
 
-        # Get joint angles and compute FK
-        joint_names = sorted([j.name for j in self.robot_urdf.actuated_joints])
-        joint_positions = joints
-        joint_angles = dict(zip(joint_names, joint_positions))
-
-        # Compute FK at current configuration
-        robot_mesh_dict = self.robot_urdf.visual_trimesh_fk(cfg=joint_angles)
-        t_fk = time.time()
-
-        # Transform pre-sampled points (NO resampling!)
-        robot_points_list = []
-        for geom, pose in robot_mesh_dict.items():
-            mesh_id = id(geom)
-            if mesh_id not in self._pre_sampled_points:
-                # Fallback: this shouldn't happen if pre-sampling worked correctly
-                print(f"Warning: mesh {mesh_id} not found in pre-sampled points, sampling on-the-fly")
-                local_pts = geom.sample(self.num_samples)
-            else:
-                local_pts = self._pre_sampled_points[mesh_id]
-
-            # Apply FK pose then world transform: T_world * pose * p_local
-            T = self.T_world_urdf @ pose
-            pts_world = trimesh.transformations.transform_points(local_pts, T)
-            robot_points_list.append(pts_world)
-
-        robot_points = np.vstack(robot_points_list)
-        t_transform = time.time()
-
-        # Downsample robot points for efficiency
-        robot_pcd = o3d.geometry.PointCloud()
-        robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
-        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.01)
-        robot_points_np = np.asarray(robot_pcd.points)
+        robot_points_np = self.get_robot_pcd(joints)
 
         # Get scene points
         scene_points_np = np.asarray(pcd.points)
@@ -526,9 +527,6 @@ class RobotArmSegmentation:
         print(f"\n=== TIMING [segment - optimized] ===")
         print(f"Pre-sampling init: {t_init - t_start:.6f} seconds")
         print(f"PCD preparation: {t_pcd_prep - t_init:.6f} seconds")
-        print(f"Forward kinematics: {t_fk - t_pcd_prep:.6f} seconds")
-        print(f"Point transformation (NO sampling): {t_transform - t_fk:.6f} seconds")
-        print(f"Filtering: {t_filter - t_transform:.6f} seconds")
         print(f"Total: {t_filter - t_start:.6f} seconds")
 
         return filtered_pcd
