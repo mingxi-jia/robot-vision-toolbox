@@ -62,10 +62,11 @@ class RobotArmSegmentation:
             # get current file path
             current_dir = os.path.dirname(os.path.abspath(__file__))
             # urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray.urdf")
-            urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray_wrist.urdf")
-            # urdf_path = "robot_filter/panda_description/urdf/panda_arm_hand_finray.urdf"
-        self.load_urdf(urdf_path)
-    
+            arm_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray_wrist.urdf")
+            hand_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_gripper_wrist.urdf")
+        self.load_urdf(arm_urdf_path)
+        self.load_gripper_urdf(hand_urdf_path)
+
     def load_camera_metadata(self, camera_json_path):
         with open(camera_json_path, 'r') as f:
             self.camera_json = json.load(f)
@@ -501,7 +502,7 @@ class RobotArmSegmentation:
         NOTE: You must call load_gripper_urdf() first to load the gripper-only URDF.
 
         Args:
-            finger_width: Distance between fingers (0.0 = closed, 0.04 = fully open)
+            finger_width: Distance between fingers (0.0 = closed, 0.08 = fully open)
 
         Returns:
             numpy array of shape (N, 3) representing gripper point cloud in gripper frame
@@ -528,7 +529,7 @@ class RobotArmSegmentation:
             transformed = mesh.copy()
             transformed.apply_transform(pose)
             # Sample points - origin is already at panda_hand frame (gripper center)
-            sampled_points.append(transformed.sample(self.num_samples))
+            sampled_points.append(transformed.sample(500))
 
         if not sampled_points:
             return np.array([]).reshape(0, 3)
@@ -540,7 +541,23 @@ class RobotArmSegmentation:
         gripper_pcd.points = o3d.utility.Vector3dVector(gripper_points)
         gripper_pcd = gripper_pcd.voxel_down_sample(voxel_size=0.005)
 
-        return np.asarray(gripper_pcd.points)
+        # move to gripper frame
+        gripper_transform = np.eye(4)
+        gripper_transform[:3, 3] = np.array([0.0, 0.0, -0.16])  # adjust as needed
+        gripper_transform[:3, :3] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_matrix()
+        gripper_pcd.transform(gripper_transform)
+
+        # add all points white colors except gripper color: all points of which z > -0.06 are blue
+        colors = np.ones_like(np.asarray(gripper_pcd.points)) * 0.8  # white (0.8, 0.8, 0.8)
+        z_vals = np.asarray(gripper_pcd.points)[:, 2]
+        mask = z_vals > -0.08
+        colors[mask] = np.array([0., 0., 1])  # sky blue
+        gripper_pcd.colors = o3d.utility.Vector3dVector(colors)
+
+        return np.concatenate(
+            (np.asarray(gripper_pcd.points), np.asarray(gripper_pcd.colors)),
+            axis=1
+        )
 
     def segment(self, original_pcd, joints):
         """

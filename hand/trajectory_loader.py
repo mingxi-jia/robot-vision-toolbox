@@ -36,7 +36,7 @@ def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
             init_hand_mat[:3, 3] = hand_pos[:3]
             offset = np.linalg.inv(init_hand_mat) @ default_pose
             # Add translation along the hand's local coordinates by rotating the local vector
-            local_trans = np.array([0.06, 0.0, 0.03])
+            local_trans = np.array([0.06, 0.0, 0.01])
             offset[:3, 3] = offset[:3, 3] + offset[:3, :3] @ local_trans
 
 
@@ -84,8 +84,8 @@ class ObservationProcessor:
         """
         self.workspace = workspace
         self.fix_point_num = fix_point_num
-        if data_type == "robot":
-            self.robot_filter = RobotArmSegmentation()
+        self.ih_size = (84,84)
+        self.robot_filter = RobotArmSegmentation()
 
     def filter_pcd_by_workspace(self, pcd: np.ndarray) -> np.ndarray:
         """Filter point cloud by workspace boundaries.
@@ -103,8 +103,8 @@ class ObservationProcessor:
         )]
         pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
         return pcd_np
-    
-    def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray=None, render: bool=False) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
+
+    def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray=None, gripper_state: np.ndarray=None, render: bool=False) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
         """Process raw point cloud.
 
         Args:
@@ -120,10 +120,10 @@ class ObservationProcessor:
         assert point_num >= 0, "Too few points in the point cloud after filtering."
 
         if render:
-            assert pose is not None, "Pose must be provided for rendering."
-            # render sphere
-            pcd_np = self.get_render_pcd(pcd_np, pose)
-        
+            assert pose is not None and gripper_state is not None, "Pose and gripper state must be provided for rendering."
+            # render gripper
+            pcd_np = self.get_render_pcd(pcd_np, pose, gripper_state=gripper_state, render_type='gripper')
+
         pcd_np = self.downsample_pcd(pcd_np, downsample_method='fps')
         return pcd_np
 
@@ -141,14 +141,15 @@ class ObservationProcessor:
             else:
                 raise ValueError(f"Unknown downsample method: {downsample_method}")
             pcd = o3d2np(pcd_o3d)
-            print(f"{pcd.shape}")
+            # print(f"{pcd.shape}")
         else:
             # Upsample by random selection
             extra_choice = np.random.choice(point_num, self.fix_point_num - point_num, replace=True)
             pcd = np.concatenate([pcd, pcd[extra_choice]], axis=0)
         return pcd
     
-    def resize_image(self, image: np.ndarray, target_size: tuple[int, int]=(84,84)) -> np.ndarray:
+    def resize_image(self, image: np.ndarray) -> np.ndarray:
+        target_size = self.ih_size
         h, w = image.shape[:2]
         min_dim = min(h, w)
         top = (h - min_dim) // 2
@@ -163,25 +164,28 @@ class ObservationProcessor:
     def localize_wrist_cam(self, rgb: np.ndarray, depth: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         depth_threshold = 0.3
         mask = depth > depth_threshold
-        if np.mean(mask) > 0.5:
+        is_blind = np.mean(mask) > 0.5
+        if is_blind:
             rgb = np.zeros_like(rgb)
             depth = np.ones_like(depth) * depth_threshold
-        return rgb, depth
-    
-    def get_policy_images(self, rgb_dict: dict, depth_dict: dict) -> tuple[dict, dict]:
+        is_contact = not is_blind
+        return rgb, depth, is_contact
+
+    def get_policy_images(self, rgb_dict: dict, depth_dict: dict) -> tuple[dict, dict, bool]:
+        is_contact = False
         for cam in rgb_dict.keys():
             rgb_resized = self.resize_image(rgb_dict[cam])
             depth_resized = self.resize_image(depth_dict[cam])
 
             if cam == 'cam4':
-                rgb_resized, depth_resized = self.localize_wrist_cam(rgb_resized, depth_resized)
+                rgb_resized, depth_resized, is_contact = self.localize_wrist_cam(rgb_resized, depth_resized)
 
             rgb_dict[cam] = rgb_resized
             depth_dict[cam] = depth_resized
 
-        return rgb_dict, depth_dict
-            
-    def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pose: np.ndarray) -> np.ndarray:
+        return rgb_dict, depth_dict, is_contact
+
+    def get_render_pcd(self, pcd_no_robot: np.ndarray, ee_pose: np.ndarray, gripper_state: np.ndarray, render_type: str='gripper') -> np.ndarray:
         """Get voxelized rendered point cloud with sphere.
 
         Args:
@@ -191,25 +195,37 @@ class ObservationProcessor:
         Returns:
             Voxelized point cloud
         """
-        geco = render_pcd_from_pose(ee_pose, 1024, 'sphere')
-        pcd_render = np.concatenate([pcd_no_robot, geco], axis=0)
+        if render_type == 'sphere':
+            manipulator = render_pcd_from_pose(ee_pose, 1024, render_type)
+        elif render_type == 'gripper':
+            gripper_state = gripper_state * 0.08
+            manipulator = self.robot_filter.get_gripper_pcd(gripper_state)
+            manipulator = render_pcd_from_pose(ee_pose, 1024, render_type, model_pcd=manipulator)
+        pcd_render = np.concatenate([pcd_no_robot, manipulator], axis=0)
         return pcd_render
 
 
-    def get_policy_obs(self, pcd, pose, joint):
-        t0 = time.time()
-        np_pcd = self.process_raw_pcd(pcd, pose, render=False)
-        t_raw_pcd_process = time.time() - t0
+    def get_policy_obs(self, pcd, pose, joint, gripper_state, use_raw_pcd: bool=False) -> tuple[np.ndarray, np.ndarray]:
+        """Get processed policy observation point cloud.
+            gripper_state: normalized gripper state between 0 and 1
+        """
 
         t0 = time.time()
-        np_pcd = self.filter_pcd_by_workspace(np_pcd)
+        pcd = self.filter_pcd_by_workspace(pcd)
         t_filtered_pcd_process = time.time() - t0
         t0 = time.time()
-        pcd_no_robot = self.robot_filter.segment(np_pcd, joint)
+        pcd_no_robot = self.robot_filter.segment(pcd, joint[1:])
         t_segment_process = time.time() - t0
         t0 = time.time()
-        render_pcd = self.process_raw_pcd(pcd_no_robot, pose, render=True)
+        render_pcd = self.process_raw_pcd(pcd_no_robot, pose, gripper_state=gripper_state, render=True)
         t_render_pcd_process = time.time() - t0
+
+        t0 = time.time()
+        if use_raw_pcd:
+            np_pcd = self.process_raw_pcd(pcd, pose, render=False)
+        else:
+            np_pcd = render_pcd 
+        t_raw_pcd_process = time.time() - t0
 
         print(f"\n=== Get Policy obs Timings ===")
         print(f"Raw PCD processing time: {t_raw_pcd_process:.4f}s")
@@ -376,24 +392,25 @@ class TrajectoryLoader:
         """
         episode_path = os.path.join(self.real_dataset_path, episode_name)
         self.check_integrity(episode_path)
-        traj_length = self.get_traj_length(episode_name)
 
         ee_poss = np.load(os.path.join(episode_path, "state", "pose_wrt_world.npy"))
         ee_poss = convert_pose_from_robot_to_fingertip(ee_poss)
+        # joint state in the order of [gripper1, gripper2, joint1, joint2, ..., jointN] where max(gripper1)=0.038
         joint_states = np.load(os.path.join(episode_path, "state", "joint_states.npy"))
         grasps_state = np.load(os.path.join(episode_path, "state", "grasp.npy"))[:,None]
         assert len(ee_poss) == len(grasps_state), "Mismatch in ee_poss and grasps signals."
 
         rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
-        pcd_seq, render_pcd_seq, ee_pos_seq = [], [], []
+        pcd_seq, render_pcd_seq, ee_pos_seq, is_contact_seq = [], [], [], []
 
-        for frame_idx, pose in tqdm(enumerate(ee_poss), total=traj_length, desc=f"Loading {episode_name}"):
-            joint = joint_states[frame_idx][1:]
+        for frame_idx, pose in tqdm(enumerate(ee_poss), total=ee_poss.shape[0], desc=f"Loading {episode_name}"):
+            joint = joint_states[frame_idx]
             pcd, rgbs, depths = self.get_pcd_from_rgbd(episode_path, frame_idx)
             
-            rgbs, depths = self.obs_processor.get_policy_images(rgbs, depths)   
-            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint)
+            rgbs, depths, is_contact = self.obs_processor.get_policy_images(rgbs, depths)   
+            normalized_gripper_state = joint[0]/0.038  # normalize gripper state between 0 and 1
+            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint, normalized_gripper_state, use_raw_pcd=False)
             
 
             for cam in self.cam_list:
@@ -403,8 +420,10 @@ class TrajectoryLoader:
             pcd_seq.append(np_pcd)
             render_pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
+            is_contact_seq.append(is_contact)
 
         ee_pos_seq = np.stack(ee_pos_seq)
+        traj_length = ee_pos_seq.shape[0]
         # offset grasps by one timestep
         actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps_state), axis=-1))
 
@@ -416,6 +435,7 @@ class TrajectoryLoader:
             'robot0_eef_pos': ee_pos_seq[:, :3].copy(),
             'robot0_eef_quat': ee_pos_seq[:, 3:7].copy(),
             'robot0_gripper_qpos': grasps_state.copy().repeat(2, axis=1), # repeat to match mimicgen format
+            'is_contact': np.stack(is_contact_seq).astype(np.float32).reshape(-1,1),
         }
 
         pcd_dict = {
@@ -441,7 +461,6 @@ class TrajectoryLoader:
     def load_trajectory_hand(self, episode_name: str) -> dict:
         episode_path = os.path.join(self.real_dataset_path, episode_name)
         process_episode_path = os.path.join(self.process_path, episode_name)
-        traj_length = self.get_traj_length(episode_name)
 
         ee_poss = np.load(
             os.path.join(process_episode_path, "hand_poses_wrt_world.npy"),
@@ -453,24 +472,37 @@ class TrajectoryLoader:
 
         rgb_dict = {f'{cam}_image': [] for cam in self.cam_list}
         depth_dict = {f'{cam}_depth': [] for cam in self.cam_list}
+        rgb_dict['cam4_image'], depth_dict['cam4_depth'] = [], []  # add wrist cam entries just for dataset consistency
         pcd_seq, render_pcd_seq, ee_pos_seq = [], [], []
         
         for i, (frame_idx, pose) in enumerate(ee_poss.items()):
             pcd, pcd_no_robot = self.get_pcd_from_episode(process_episode_path, frame_idx)
+            # TODO: hardcode pose for debugging, remove later
+            pose[3:] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_quat()
+
+            np_pcd_hand = self.obs_processor.process_raw_pcd(pcd, pose)
+            normalized_gripper_state = 0.5 if grasps_state[i] else 1.0  # binary gripper state for hand data
+            np_pcd_no_robot = self.obs_processor.process_raw_pcd(pcd_no_robot, pose, gripper_state=normalized_gripper_state, render=True)
 
             for cam in self.cam_list:
                 rgb, depth = self.get_obs_from_episode(episode_path, cam, i)
+                rgb, depth = self.obs_processor.resize_image(rgb), self.obs_processor.resize_image(depth)
                 rgb_dict[f'{cam}_image'].append(rgb)
                 depth_dict[f'{cam}_depth'].append(depth)
 
-            np_pcd = self.obs_processor.process_raw_pcd(pcd, pose)
-            np_pcd_no_robot = self.obs_processor.process_raw_pcd(pcd_no_robot, pose, render=True)
-            
-            pcd_seq.append(np_pcd)
+            # add fake cam4 (wrist cam) as zeros
+            ih_size = self.obs_processor.ih_size
+            wrist_cam_rgb = np.zeros([ih_size[0], ih_size[1], 3])
+            wrist_cam_depth = np.ones([ih_size[0], ih_size[1], 1]) * 0.3
+            rgb_dict['cam4_image'].append(wrist_cam_rgb)
+            depth_dict['cam4_depth'].append(wrist_cam_depth)
+
+            pcd_seq.append(np_pcd_hand)
             render_pcd_seq.append(np_pcd_no_robot)
             ee_pos_seq.append(pose)
 
         ee_pos_seq = np.stack(ee_pos_seq)
+        traj_length = ee_pos_seq.shape[0]
         # offset grasps by one timestep
         actions = convert_state_to_action(np.concatenate((ee_pos_seq, grasps_state), axis=-1))
 
@@ -482,14 +514,21 @@ class TrajectoryLoader:
             'robot0_eef_pos': ee_pos_seq[:, :3].copy(),
             'robot0_eef_quat': ee_pos_seq[:, 3:7].copy(),
             'robot0_gripper_qpos': grasps_state.copy().repeat(2, axis=1), # repeat to match mimicgen format
+            'is_contact': np.zeros([traj_length, 1]).astype(np.float32),
         }
 
         pcd_dict = {
-            'pcd': np.stack(pcd_seq),
+            'pcd': np.stack(render_pcd_seq), # no 'raw robot pcd' for hand data
             'render_pcd': np.stack(render_pcd_seq), 
         }
 
-        obss = {**rgb_dict, **depth_dict, **state_dict, **pcd_dict, 'pcd': np.stack(pcd_seq)}
+        # rename cam4 to wrist_cam for clarity
+        if 'cam4_image' in rgb_dict:
+            rgb_dict['robot0_eye_in_hand_image'] = rgb_dict.pop('cam4_image')
+        if 'cam4_depth' in depth_dict:
+            depth_dict['robot0_eye_in_hand_depth'] = depth_dict.pop('cam4_depth')
+
+        obss = {**rgb_dict, **depth_dict, **state_dict, **pcd_dict}
 
         return {
             'obs': obss,

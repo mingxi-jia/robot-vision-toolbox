@@ -172,7 +172,7 @@ def apply_se3_pcd_transform(points, transform):
     new_points[:, :3] = transformed_points[:, :3]
     return new_points
 
-def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
+def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper', model_pcd=None):
     """
     Render the gripper or sphere point cloud at the given end effector pose.
     ee_pose: (N,7) array [x,y,z,qx,qy,qz,qw]
@@ -189,6 +189,10 @@ def render_pcd_from_pose(ee_pose, fix_point_num=1024, model_type='gripper'):
     else:
         raise NotImplementedError(f"model type {model_type} not implemented")
 
+    if model_pcd is not None:
+        base_pcd = model_pcd[:, :3]
+        base_color = model_pcd[:, 3:6]
+        
     ee_pose = ee_pose.reshape(-1, 7)
     batch_pcds = []
 
