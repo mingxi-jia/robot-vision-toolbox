@@ -246,7 +246,7 @@
     <collision>
       <!-- <origin rpy="3.14159265359 0 0" xyz="0 0 0"/> -->
       <geometry>
-        <mesh filename="package://panda_description/meshes/collision/finger.stl"/>
+        <mesh filename="package://panda_description/meshes/collision/finger.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -265,7 +265,7 @@
     <collision>
       <origin rpy="0 0 3.14159265359" xyz="0 0 0"/>
       <geometry>
-        <mesh filename="package://panda_description/meshes/collision/finger.stl"/>
+        <mesh filename="package://panda_description/meshes/collision/finger.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
