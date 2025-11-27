@@ -1,9 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Panda Gripper with Finray Fingers and Wrist Camera -->
-<!-- Origin is at the center of the gripper (panda_hand frame) -->
+<!-- Origin is at the end-effector frame (adjustable orientation) -->
 <robot name="panda_gripper" xmlns:xacro="http://www.ros.org/wiki/xacro">
 
-  <!-- Base link: panda_hand -->
+  <!-- Dummy base link for gripper (allows rotation of entire assembly) -->
+  <link name="gripper_base">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0.0" ixz="0.0" iyy="1e-6" iyz="0.0" izz="1e-6"/>
+    </inertial>
+  </link>
+
+  <!-- Joint to rotate entire gripper assembly -->
+  <joint name="gripper_base_to_hand" type="fixed">
+    <parent link="gripper_base"/>
+    <child link="panda_hand"/>
+    <!-- ADJUST THIS to rotate entire gripper: rpy="roll pitch yaw" -->
+    <origin rpy="0 3.141593 3.141593" xyz="0 0 0"/>
+  </joint>
+
+  <!-- panda_hand link (base of gripper) -->
   <link name="panda_hand">
     <inertial>
       <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
@@ -11,11 +28,13 @@
       <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
     </inertial>
     <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <mesh filename="package://panda_description/meshes/visual/hand.dae"/>
       </geometry>
     </visual>
     <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
       <geometry>
         <mesh filename="package://panda_description/meshes/collision/hand.stl"/>
       </geometry>
@@ -62,8 +81,8 @@
     </collision>
   </link>
 
-  <!-- Wrist Camera Link -->
-  <link name="panda_wrist_cam">
+  <!-- Wrist Camera Box (manually created mount) -->
+  <link name="panda_wrist_cam_box">
     <inertial>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <mass value="0.05"/>
@@ -72,13 +91,34 @@
     <visual>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.06 0.16 0.03"/>
+        <box size="0.06 0.04 0.005"/>
       </geometry>
     </visual>
     <collision>
       <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <box size="0.06 0.16 0.03"/>
+        <box size="0.06 0.04 0.005"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Wrist Camera Link (actual camera with mesh) -->
+  <link name="panda_wrist_cam">
+    <inertial>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <mass value="0.03"/>
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/visual/wrist_cam.dae" scale="0.001 0.001 0.001"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/collision/wrist_cam.stl" scale="0.001 0.001 0.001"/>
       </geometry>
     </collision>
   </link>
@@ -101,9 +141,20 @@
     <mimic joint="panda_finger_joint1"/>
   </joint>
 
-  <joint name="panda_wrist_cam_joint" type="fixed">
+  <!-- Joint: panda_hand to wrist camera box -->
+  <joint name="panda_wrist_cam_box_joint" type="fixed">
+    <!-- CUSTOMIZE THIS: Position of the box mount relative to panda_hand -->
     <origin xyz="-0.05 0 0.00" rpy="0 0 0"/>
     <parent link="panda_hand"/>
+    <child link="panda_wrist_cam_box"/>
+  </joint>
+
+  <!-- Joint: camera box to actual camera -->
+  <joint name="panda_wrist_cam_joint" type="fixed">
+    <!-- CUSTOMIZE THIS: Position of camera relative to the box center
+         Default: camera is at the bottom center of the box (z = -0.015) -->
+    <origin xyz="-0.01 0 0.03" rpy="0 0 0"/>
+    <parent link="panda_wrist_cam_box"/>
     <child link="panda_wrist_cam"/>
   </joint>
 

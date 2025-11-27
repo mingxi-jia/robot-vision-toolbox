@@ -41,8 +41,8 @@ joint_thresholds = {
 
 class RobotArmSegmentation:
     def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds, urdf_path=None, num_samples=1000):
-        self.robot_urdf = None
-        self.robot_urdf = None
+        self.robot_urdf = None  # Main robot URDF (whole arm + hand)
+        self._gripper_urdf = None  # Gripper-only URDF (for gripper point cloud generation)
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
         self.joint_thresholds = joint_thresholds
@@ -120,6 +120,7 @@ class RobotArmSegmentation:
 
     #load urdf as part of the class as well
     def load_urdf(self, urdf_path):
+        """Load the main robot URDF (whole arm + hand)."""
         with open(urdf_path, 'r') as f:
             urdf_content = f.read()
 
@@ -152,6 +153,32 @@ class RobotArmSegmentation:
         self.T_world_urdf[:3, 3] = self.base_pose[:3]  # translation part
 
         return self.robot_urdf
+
+    def load_gripper_urdf(self, urdf_path):
+        """Load a separate gripper-only URDF for gripper point cloud generation."""
+        with open(urdf_path, 'r') as f:
+            urdf_content = f.read()
+
+        # Get the package directory (parent of 'urdf' directory)
+        urdf_dir = os.path.dirname(os.path.abspath(urdf_path))
+        package_dir = os.path.dirname(urdf_dir)
+
+        # Replace package:// URIs with absolute paths
+        urdf_str = urdf_content.replace("package://panda_description", package_dir)
+
+        with tempfile.NamedTemporaryFile(mode="w+", suffix=".urdf", delete=False) as f:
+            f.write(urdf_str)
+            f.flush()
+            self._gripper_urdf = URDF.load(f.name)
+            temp_file_path = f.name
+
+        # Clean up the temp file after loading
+        try:
+            os.unlink(temp_file_path)
+        except:
+            pass
+
+        return self._gripper_urdf
 
     # Robot arm segmentation function
     def segment_one_camera(self, rgb, depth, joints):
@@ -471,38 +498,19 @@ class RobotArmSegmentation:
         """
         Get point cloud of the gripper (hand + finray fingers + wrist camera).
 
+        NOTE: You must call load_gripper_urdf() first to load the gripper-only URDF.
+
         Args:
             finger_width: Distance between fingers (0.0 = closed, 0.04 = fully open)
 
         Returns:
             numpy array of shape (N, 3) representing gripper point cloud in gripper frame
         """
-        # Load gripper URDF if not already loaded
-        if not hasattr(self, '_gripper_urdf') or self._gripper_urdf is None:
-            current_dir = os.path.dirname(os.path.abspath(__file__))
-            gripper_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_gripper_wrist.urdf")
-
-            with open(gripper_urdf_path, 'r') as f:
-                urdf_content = f.read()
-
-            # Get the package directory
-            urdf_dir = os.path.dirname(os.path.abspath(gripper_urdf_path))
-            package_dir = os.path.dirname(urdf_dir)
-
-            # Replace package:// URIs with absolute paths
-            urdf_str = urdf_content.replace("package://panda_description", package_dir)
-
-            with tempfile.NamedTemporaryFile(mode="w+", suffix=".urdf", delete=False) as f:
-                f.write(urdf_str)
-                f.flush()
-                self._gripper_urdf = URDF.load(f.name)
-                temp_file_path = f.name
-
-            # Clean up
-            try:
-                os.unlink(temp_file_path)
-            except:
-                pass
+        # Check if gripper URDF is loaded
+        if self._gripper_urdf is None:
+            raise ValueError(
+                "Gripper URDF not loaded. Call load_gripper_urdf() first with the gripper-only URDF path."
+            )
 
         # Set up joint configuration for gripper
         # The gripper has two prismatic joints that move symmetrically
