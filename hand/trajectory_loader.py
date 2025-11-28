@@ -205,7 +205,7 @@ class ObservationProcessor:
         return pcd_render
 
 
-    def get_policy_obs(self, pcd, pose, joint, gripper_state, use_raw_pcd: bool=False) -> tuple[np.ndarray, np.ndarray]:
+    def get_policy_obs(self, pcd, pose, joint, use_raw_pcd: bool=True) -> tuple[np.ndarray, np.ndarray]:
         """Get processed policy observation point cloud.
             gripper_state: normalized gripper state between 0 and 1
         """
@@ -217,6 +217,7 @@ class ObservationProcessor:
         pcd_no_robot = self.robot_filter.segment(pcd, joint[1:])
         t_segment_process = time.time() - t0
         t0 = time.time()
+        gripper_state = joint[0] / 0.038
         render_pcd = self.process_raw_pcd(pcd_no_robot, pose, gripper_state=gripper_state, render=True)
         t_render_pcd_process = time.time() - t0
 
@@ -410,8 +411,7 @@ class TrajectoryLoader:
             pcd, rgbs, depths = self.get_pcd_from_rgbd(episode_path, frame_idx)
             
             rgbs, depths, is_contact = self.obs_processor.get_policy_images(rgbs, depths)   
-            normalized_gripper_state = joint[0]/0.038  # normalize gripper state between 0 and 1
-            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint, normalized_gripper_state, use_raw_pcd=True)
+            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint, use_raw_pcd=True)
             
 
             for cam in self.cam_list:
