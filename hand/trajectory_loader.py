@@ -165,9 +165,9 @@ class ObservationProcessor:
         depth_threshold = 0.3
         mask = depth > depth_threshold
         is_blind = np.mean(mask) > 0.5
-        if is_blind:
-            rgb = np.zeros_like(rgb)
-            depth = np.ones_like(depth) * depth_threshold
+        # if is_blind:
+        #     rgb = np.zeros_like(rgb)
+        #     depth = np.ones_like(depth) * depth_threshold
         is_contact = not is_blind
         return rgb, depth, is_contact
 
@@ -222,7 +222,8 @@ class ObservationProcessor:
 
         t0 = time.time()
         if use_raw_pcd:
-            np_pcd = self.process_raw_pcd(pcd, pose, render=False)
+            # mix of raw pcd and rendered pcd
+            np_pcd = self.process_raw_pcd(pcd, pose, gripper_state=gripper_state, render=True)
         else:
             np_pcd = render_pcd 
         t_raw_pcd_process = time.time() - t0
@@ -410,7 +411,7 @@ class TrajectoryLoader:
             
             rgbs, depths, is_contact = self.obs_processor.get_policy_images(rgbs, depths)   
             normalized_gripper_state = joint[0]/0.038  # normalize gripper state between 0 and 1
-            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint, normalized_gripper_state, use_raw_pcd=False)
+            np_pcd, np_pcd_no_robot = self.obs_processor.get_policy_obs(pcd, pose, joint, normalized_gripper_state, use_raw_pcd=True)
             
 
             for cam in self.cam_list:
