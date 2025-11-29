@@ -101,7 +101,7 @@ class ObservationProcessor:
             (pcd[:, 1] > self.workspace[1, 0]) & (pcd[:, 1] < self.workspace[1, 1]) &
             (pcd[:, 2] > self.workspace[2, 0]) & (pcd[:, 2] < self.workspace[2, 1])
         )]
-        pcd_np = pcd_np[pcd_np[:, 2] > 0.02]
+        pcd_np = pcd_np[pcd_np[:, 2] > 0.015]
         return pcd_np
 
     def process_raw_pcd(self, pcd: np.ndarray, pose: np.ndarray=None, gripper_state: np.ndarray=None, render: bool=False) -> tuple[np.ndarray, o3d.geometry.PointCloud]:
@@ -165,9 +165,9 @@ class ObservationProcessor:
         depth_threshold = 0.3
         mask = depth > depth_threshold
         is_blind = np.mean(mask) > 0.5
-        # if is_blind:
-        #     rgb = np.zeros_like(rgb)
-        #     depth = np.ones_like(depth) * depth_threshold
+        if is_blind:
+            rgb = np.zeros_like(rgb)
+            depth = np.ones_like(depth) * depth_threshold
         is_contact = not is_blind
         return rgb, depth, is_contact
 

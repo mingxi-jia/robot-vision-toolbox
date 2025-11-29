@@ -40,13 +40,13 @@ joint_thresholds = {
 }
 
 class RobotArmSegmentation:
-    def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds, urdf_path=None, num_samples=1000):
+    def __init__(self, is_simulation=False, joint_thresholds=joint_thresholds, urdf_path=None, num_samples=1500):
         self.robot_urdf = None  # Main robot URDF (whole arm + hand)
         self._gripper_urdf = None  # Gripper-only URDF (for gripper point cloud generation)
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
         self.joint_thresholds = joint_thresholds
-        self.filter_threshold = 0.03
+        self.filter_threshold = 0.02
         self.num_samples = num_samples
         self._pre_sampled_points = None  # Will be lazily initialized
         self._mesh_id_map = None  # Maps mesh id to index for consistent ordering
@@ -491,7 +491,7 @@ class RobotArmSegmentation:
         # Downsample robot points for efficiency
         robot_pcd = o3d.geometry.PointCloud()
         robot_pcd.points = o3d.utility.Vector3dVector(robot_points)
-        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.01)
+        robot_pcd = robot_pcd.voxel_down_sample(voxel_size=0.005)
         robot_points_np = np.asarray(robot_pcd.points)
         return robot_points_np
     
