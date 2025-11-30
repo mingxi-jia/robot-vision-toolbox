@@ -10,10 +10,35 @@ import os
 import h5py
 import numpy as np
 from tqdm import tqdm
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
-from hand.hand_utils import load_camera_info_dict
-from hand.trajectory_loader import ObservationProcessor
-from hand.trajectory_loader import TrajectoryLoader
+from hand_tool.hand_utils import load_camera_info_dict
+from hand_tool.trajectory_loader import ObservationProcessor
+from hand_tool.trajectory_loader import TrajectoryLoader
+
+
+def load_trajectory_worker(args):
+    """Helper function for parallel trajectory loading.
+
+    Args:
+        args: Tuple of (episode_name, real_dataset_path, process_path, data_type,
+              info_dict, cam_list, main_cam, workspace, fix_point_num)
+
+    Returns:
+        Tuple of (episode_name, trajectory_data)
+    """
+    (episode_name, real_dataset_path, process_path, data_type,
+     info_dict, cam_list, main_cam, workspace, fix_point_num) = args
+
+    # Create processor and loader in worker process
+    pcd_processor = ObservationProcessor(workspace, fix_point_num, data_type)
+    trajectory_loader = TrajectoryLoader(
+        real_dataset_path, process_path, data_type, info_dict,
+        cam_list, main_cam, pcd_processor
+    )
+
+    traj = trajectory_loader.load_trajectory(episode_name)
+    return episode_name, traj
 
 
 class RealToRobomimicConverter:
@@ -62,23 +87,50 @@ class RealToRobomimicConverter:
         self.data_type = data_type
         # Run preprocessing
         if data_type == "hand":
-            from hand.hand_preprocessor import HandPreprocessor
+            from hand_tool.hand_preprocessor import HandPreprocessor
             print(f"Extracting actions from real dataset using HAMER...")
             self.hand_preprocessor = HandPreprocessor(real_dataset_path, self.info_dict, main_cam_idx)
             self.hand_preprocessor.preprocess_all(self.episode_list)
         else:
             print(f"Skipping HAMER preprocessing for data type: {data_type}")
 
-    def convert(self) -> None:
-        """Convert dataset to robomimic format."""
+    def convert(self, num_workers=None) -> None:
+        """Convert dataset to robomimic format.
+
+        Args:
+            num_workers: Number of parallel workers. If None, uses CPU count.
+        """
         print(f"Converting data to robomimic format...")
 
+        # Prepare arguments for parallel trajectory loading
+        load_args = [
+            (episode_name, self.real_dataset_path, self.process_path, self.data_type,
+             self.info_dict, self.cam_list, self.main_cam, self.workspace, self.fix_point_num)
+            for episode_name in self.episode_list
+        ]
+
+        # Load all trajectories in parallel
+        print(f"Loading {len(self.episode_list)} trajectories in parallel...")
+        trajectories = {}
+        with ProcessPoolExecutor(max_workers=num_workers) as executor:
+            futures = {executor.submit(load_trajectory_worker, args): args[0]
+                      for args in load_args}
+
+            bar = tqdm(total=len(futures), desc="Loading trajectories")
+            for future in as_completed(futures):
+                episode_name, traj = future.result()
+                trajectories[episode_name] = traj
+                bar.update(1)
+            bar.close()
+
+        # Write trajectories to HDF5 sequentially
+        print(f"Writing trajectories to HDF5...")
         with h5py.File(self.robomimic_dataset_path, "w") as f_out:
             data_grp = f_out.create_group("data")
 
-            bar = tqdm(total=len(self.episode_list), desc="Converting episodes")
+            bar = tqdm(total=len(self.episode_list), desc="Writing episodes")
             for episode_idx, episode_name in enumerate(self.episode_list):
-                traj = self.trajectory_loader.load_trajectory(episode_name)
+                traj = trajectories[episode_name]
 
                 ep = f"demo_{episode_idx}"
                 ep_data_grp = data_grp.create_group(ep)
@@ -98,7 +150,7 @@ class RealToRobomimicConverter:
 
                 ep_data_grp.attrs["num_samples"] = traj["actions"].shape[0]
                 tqdm.write(f"ep {episode_idx}: wrote {ep_data_grp.attrs['num_samples']} "
-                          f"transitions to group {ep}")
+                            f"transitions to group {ep}")
                 bar.update(1)
             bar.close()
 

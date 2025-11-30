@@ -7,12 +7,12 @@ import numpy as np
 import open3d as o3d
 from PIL import Image
 from scipy.spatial.transform import Rotation as R, Slerp
-from hand.hand_utils import convert_state_to_action
+from hand_tool.hand_utils import convert_state_to_action
 
 from robot_filter.arm_segmentor import RobotArmSegmentation
 from utils.pcd_utils import (depth2fgpcd, np2o3d, o3d2np, pcd_to_voxel, render_pcd_from_pose, convert_RGBD_fast,
                              simple_downsample_for_fixed_scene)
-from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5
+from configs.workspace import WORKSPACE, MAX_POINT_NUM_HDF5, SIM_WORKSPACE
 from tqdm import tqdm
 
 def save_pcd(pcd):
@@ -28,7 +28,7 @@ def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
         # First frame: calculate corrective rotation
         if offset is None:
             default_pose = np.eye(4)
-            default_pose[:3, :3] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_matrix()
+            default_pose[:3, :3] = R.from_euler('XYZ', [180, 15, 0], degrees=True).as_matrix()
             default_pose[:3, 3] = hand_pos[:3]
 
             init_hand_mat = np.eye(4)
@@ -36,7 +36,7 @@ def convert_pose_from_hand_to_fingertip(ee_poses: dict) -> dict:
             init_hand_mat[:3, 3] = hand_pos[:3]
             offset = np.linalg.inv(init_hand_mat) @ default_pose
             # Add translation along the hand's local coordinates by rotating the local vector
-            local_trans = np.array([0.06, 0.0, 0.01])
+            local_trans = np.array([0.02, 0.0, 0.06])
             offset[:3, 3] = offset[:3, 3] + offset[:3, :3] @ local_trans
 
 
@@ -75,17 +75,18 @@ def convert_pose_from_robot_to_fingertip(ee_poses: dict) -> dict:
 class ObservationProcessor:
     """Processes point clouds for dataset conversion."""
 
-    def __init__(self, workspace: np.ndarray=WORKSPACE, fix_point_num: int=MAX_POINT_NUM_HDF5, data_type: str="robot"):
+    def __init__(self, workspace: np.ndarray=WORKSPACE, fix_point_num: int=MAX_POINT_NUM_HDF5, data_type: str="robot",
+                 is_simulation=False):
         """Initialize processor.
 
         Args:
             workspace: 3x2 array defining workspace boundaries
             fix_point_num: Target number of points after processing
         """
-        self.workspace = workspace
+        self.workspace = workspace if not is_simulation else SIM_WORKSPACE
         self.fix_point_num = fix_point_num
         self.ih_size = (84,84)
-        self.robot_filter = RobotArmSegmentation()
+        self.robot_filter = RobotArmSegmentation(is_simulation=is_simulation)
 
     def filter_pcd_by_workspace(self, pcd: np.ndarray) -> np.ndarray:
         """Filter point cloud by workspace boundaries.
@@ -229,11 +230,11 @@ class ObservationProcessor:
             np_pcd = render_pcd 
         t_raw_pcd_process = time.time() - t0
 
-        print(f"\n=== Get Policy obs Timings ===")
-        print(f"Raw PCD processing time: {t_raw_pcd_process:.4f}s")
-        print(f"Filtered PCD processing time: {t_filtered_pcd_process:.4f}s")
-        print(f"Segmentation time: {t_segment_process:.4f}s")
-        print(f"Render PCD processing time: {t_render_pcd_process:.4f}s")
+        # print(f"\n=== Get Policy obs Timings ===")
+        # print(f"Raw PCD processing time: {t_raw_pcd_process:.4f}s")
+        # print(f"Filtered PCD processing time: {t_filtered_pcd_process:.4f}s")
+        # print(f"Segmentation time: {t_segment_process:.4f}s")
+        # print(f"Render PCD processing time: {t_render_pcd_process:.4f}s")
         return np_pcd, render_pcd
 
 class TrajectoryLoader:
@@ -479,7 +480,7 @@ class TrajectoryLoader:
         for i, (frame_idx, pose) in enumerate(ee_poss.items()):
             pcd, pcd_no_robot = self.get_pcd_from_episode(process_episode_path, frame_idx)
             # TODO: hardcode pose for debugging, remove later
-            pose[3:] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_quat()
+            # pose[3:] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_quat()
 
             np_pcd_hand = self.obs_processor.process_raw_pcd(pcd, pose)
             normalized_gripper_state = 0.5 if grasps_state[i] else 1.0  # binary gripper state for hand data

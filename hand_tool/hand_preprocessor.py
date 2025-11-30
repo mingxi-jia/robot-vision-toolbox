@@ -5,8 +5,8 @@ import numpy as np
 import torch
 from time import perf_counter
 from tqdm import tqdm
-from hand.hamer_wrapper import HandPreprocessor as Hamer
-from hand.hand_utils import generate_pcd_sequence
+from hand_tool.hamer_wrapper import HandPreprocessor as Hamer
+from hand_tool.hand_utils import generate_pcd_sequence
 
 
 

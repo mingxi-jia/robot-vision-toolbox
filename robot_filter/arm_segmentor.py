@@ -6,7 +6,7 @@ import copy
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils.pcd_utils import convert_RGBD_to_open3d
-os.environ["MUJOCO_GL"] = "osmesa"
+# os.environ["MUJOCO_GL"] = "osmesa"
 # from robosuite.controllers import load_controller_config
 import numpy as np
 import open3d as o3d
@@ -46,10 +46,11 @@ class RobotArmSegmentation:
         self.T_world_urdf = None  # Will be set later
         self.camera_name = None  # Will be set later
         self.joint_thresholds = joint_thresholds
-        self.filter_threshold = 0.02
+        self.filter_threshold = 0.01 if is_simulation else 0.02
         self.num_samples = num_samples
         self._pre_sampled_points = None  # Will be lazily initialized
         self._mesh_id_map = None  # Maps mesh id to index for consistent ordering
+        self.is_simulation = is_simulation 
 
         if is_simulation:
             self.base_pose = np.array([-0.56, 0., 0.912])
@@ -61,9 +62,12 @@ class RobotArmSegmentation:
         if urdf_path is None:
             # get current file path
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            # urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray.urdf")
-            arm_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray_wrist.urdf")
-            hand_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_gripper_wrist.urdf")
+            if self.is_simulation:
+                arm_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand.urdf")
+                hand_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_gripper.urdf")
+            else:
+                arm_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_arm_hand_finray_wrist.urdf")
+                hand_urdf_path = os.path.join(current_dir, "panda_description", "urdf", "panda_gripper_wrist.urdf")
         self.load_urdf(arm_urdf_path)
         self.load_gripper_urdf(hand_urdf_path)
 
@@ -96,7 +100,7 @@ class RobotArmSegmentation:
     
     def _init_pre_samples(self):
         """Pre-sample points from each mesh in local/body frame (zero configuration)."""
-        print("Initializing pre-sampled robot mesh points...")
+        # print("Initializing pre-sampled robot mesh points...")
         t0 = time.time()
 
         # Use zero configuration for sampling
@@ -117,7 +121,7 @@ class RobotArmSegmentation:
             self._pre_sampled_points[mesh_id] = pts
             self._mesh_id_map[mesh_id] = idx
 
-        print(f"Pre-sampling completed in {time.time() - t0:.4f}s for {len(self._pre_sampled_points)} meshes")
+        # print(f"Pre-sampling completed in {time.time() - t0:.4f}s for {len(self._pre_sampled_points)} meshes")
 
     #load urdf as part of the class as well
     def load_urdf(self, urdf_path):
@@ -541,18 +545,23 @@ class RobotArmSegmentation:
         gripper_pcd.points = o3d.utility.Vector3dVector(gripper_points)
         gripper_pcd = gripper_pcd.voxel_down_sample(voxel_size=0.005)
 
+        finger_to_finray_offset = -0.1 if self.is_simulation else -0.16  # adjust based on actual gripper design
         # move to gripper frame
         gripper_transform = np.eye(4)
-        gripper_transform[:3, 3] = np.array([0.0, 0.0, -0.16])  # adjust as needed
+        gripper_transform[:3, 3] = np.array([0.0, 0.0, finger_to_finray_offset])  # adjust as needed
         gripper_transform[:3, :3] = R.from_euler('XYZ', [180, 0, 0], degrees=True).as_matrix()
         gripper_pcd.transform(gripper_transform)
-
-        # add all points white colors except gripper color: all points of which z > -0.06 are blue
-        colors = np.ones_like(np.asarray(gripper_pcd.points)) * 0.8  # white (0.8, 0.8, 0.8)
-        z_vals = np.asarray(gripper_pcd.points)[:, 2]
-        mask = z_vals > -0.08
-        colors[mask] = np.array([0., 0., 1])  # sky blue
-        gripper_pcd.colors = o3d.utility.Vector3dVector(colors)
+        
+        if self.is_simulation:
+            colors = np.ones_like(np.asarray(gripper_pcd.points)) * 0.8  # white (0.8, 0.8, 0.8)
+            gripper_pcd.colors = o3d.utility.Vector3dVector(colors)
+        else:
+            # add all points white colors except gripper color: all points of which z > -0.06 are blue
+            colors = np.ones_like(np.asarray(gripper_pcd.points)) * 0.8  # white (0.8, 0.8, 0.8)
+            z_vals = np.asarray(gripper_pcd.points)[:, 2]
+            mask = z_vals > -0.08
+            colors[mask] = np.array([0., 0., 1])  # sky blue
+            gripper_pcd.colors = o3d.utility.Vector3dVector(colors)
 
         return np.concatenate(
             (np.asarray(gripper_pcd.points), np.asarray(gripper_pcd.colors)),
@@ -616,9 +625,9 @@ class RobotArmSegmentation:
         )
 
         # Timing report
-        print(f"\n=== TIMING [segment - optimized] ===")
-        print(f"Pre-sampling init: {t_init - t_start:.6f} seconds")
-        print(f"PCD preparation: {t_pcd_prep - t_init:.6f} seconds")
-        print(f"Total: {t_filter - t_start:.6f} seconds")
+        # print(f"\n=== TIMING [segment - optimized] ===")
+        # print(f"Pre-sampling init: {t_init - t_start:.6f} seconds")
+        # print(f"PCD preparation: {t_pcd_prep - t_init:.6f} seconds")
+        # print(f"Total: {t_filter - t_start:.6f} seconds")
 
         return filtered_pcd

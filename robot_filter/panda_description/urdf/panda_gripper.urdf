@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Panda Gripper with Finray Fingers and Wrist Camera -->
+<!-- Origin is at the end-effector frame (adjustable orientation) -->
+<robot name="panda_gripper" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- Dummy base link for gripper (allows rotation of entire assembly) -->
+  <link name="gripper_base">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <mass value="0.001"/>
+      <inertia ixx="1e-6" ixy="0.0" ixz="0.0" iyy="1e-6" iyz="0.0" izz="1e-6"/>
+    </inertial>
+  </link>
+
+  <!-- Joint to rotate entire gripper assembly -->
+  <joint name="gripper_base_to_hand" type="fixed">
+    <parent link="gripper_base"/>
+    <child link="panda_hand"/>
+    <!-- ADJUST THIS to rotate entire gripper: rpy="roll pitch yaw" -->
+    <origin rpy="0 3.141593 3.141593" xyz="0 0 0"/>
+  </joint>
+
+  <!-- panda_hand link (base of gripper) -->
+  <link name="panda_hand">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <mass value="0.67893"/>
+      <inertia ixx="0.01" ixy="0.0" ixz="0.0" iyy="0.01" iyz="0.0" izz="0.01"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/visual/hand.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin rpy="0 0 0" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/collision/hand.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Left Finray Finger -->
+  <link name="panda_leftfinger">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <mass value="0.01053"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/visual/finger.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/collision/finger.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- Right Finray Finger -->
+  <link name="panda_rightfinger">
+    <inertial>
+      <origin rpy="0 0 0" xyz="0.0 0.0 0.0"/>
+      <mass value="0.01053"/>
+      <inertia ixx="0.001" ixy="0.0" ixz="0.0" iyy="0.001" iyz="0.0" izz="0.001"/>
+    </inertial>
+    <visual>
+      <origin rpy="0 0 3.14159265359" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/visual/finger.dae"/>
+      </geometry>
+    </visual>
+    <collision>
+      <origin rpy="0 0 3.14159265359" xyz="0 0 0"/>
+      <geometry>
+        <mesh filename="package://panda_description/meshes/collision/finger.stl"/>
+      </geometry>
+    </collision>
+  </link>
+
+
+
+  <!-- Joints -->
+  <joint name="panda_finger_joint1" type="prismatic">
+    <parent link="panda_hand"/>
+    <child link="panda_leftfinger"/>
+    <origin rpy="0 0 0" xyz="0 0 0.0584"/>
+    <axis xyz="0 1 0"/>
+    <limit effort="20" lower="0.0" upper="0.04" velocity="0.2"/>
+  </joint>
+
+  <joint name="panda_finger_joint2" type="prismatic">
+    <parent link="panda_hand"/>
+    <child link="panda_rightfinger"/>
+    <origin rpy="0 0 0" xyz="0 0 0.0584"/>
+    <axis xyz="0 -1 0"/>
+    <limit effort="20" lower="0.0" upper="0.04" velocity="0.2"/>
+    <mimic joint="panda_finger_joint1"/>
+  </joint>
+
+
+</robot>

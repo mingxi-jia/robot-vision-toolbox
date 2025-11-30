@@ -37,7 +37,7 @@ python scripts/play_pcd_sequence.py /home/mingxi/data/realworld/hand_rotation_te
 - `convert_state_to_action()`: Convert poses to actions
 
 ### `point_cloud_processor.py`
-- `PointCloudProcessor`: Filters, downsamples, and processes point clouds
+- `ObservationProcessor`: Filters, downsamples, and processes point clouds
 
 ### `preprocessing.py`
 - `Preprocessor`: Runs HAMER hand tracking and PCD generation

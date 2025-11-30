@@ -13,13 +13,15 @@ from scipy.spatial.transform import Rotation
 import sys
 
 
-def visualize_episode(f, episode_key, timeline="frame"):
+def visualize_episode(f, episode_key, timeline="frame", modalities=None):
     """Visualize a single episode from the HDF5 file.
 
     Args:
         f: HDF5 file handle
         episode_key: Key of the episode (e.g., "demo_0")
         timeline: Timeline name for rerun
+        modalities: List of modalities to visualize. If None, visualize all.
+                   Options: pcd, pcd_render, robot0_eye_in_hand_image, robot_eef, action_pose, robot_state
     """
     ep_grp = f[f"data/{episode_key}"]
 
@@ -48,11 +50,11 @@ def visualize_episode(f, episode_key, timeline="frame"):
         obs_pcd_render = np.array(ep_grp["obs/render_pcd"])
         print(f"    Point cloud 'render_pcd' shape: {obs_pcd_render.shape}")
 
-    # Load cam4_image
-    cam4_image = None
-    if "cam4_image" in obs_keys:
-        cam4_image = np.array(ep_grp["obs/cam4_image"])
-        print(f"    cam4_image shape: {cam4_image.shape}")
+    # Load robot0_eye_in_hand_image
+    robot0_eye_in_hand_image = None
+    if "robot0_eye_in_hand_image" in obs_keys:
+        robot0_eye_in_hand_image = np.array(ep_grp["obs/robot0_eye_in_hand_image"])
+        print(f"    robot0_eye_in_hand_image shape: {robot0_eye_in_hand_image.shape}")
 
     # Load robot end-effector pose from observations if available
     eef_pos = None
@@ -62,12 +64,16 @@ def visualize_episode(f, episode_key, timeline="frame"):
     if "robot0_eef_quat" in obs_keys:
         eef_quat = np.array(ep_grp["obs/robot0_eef_quat"])
 
+    # Helper function to check if modality should be visualized
+    def should_visualize(modality_name):
+        return modalities is None or modality_name in modalities
+
     # Visualize each frame
     for i in range(num_samples):
         rr.set_time(timeline, sequence=i)
 
         # Log 'pcd' point cloud if available
-        if obs_pcd is not None:
+        if obs_pcd is not None and should_visualize("pcd"):
             pcd_frame = obs_pcd[i]  # Shape: (N, 3) or (N, 6) with colors
 
             if pcd_frame.shape[1] >= 6:
@@ -87,7 +93,7 @@ def visualize_episode(f, episode_key, timeline="frame"):
                 )
 
         # Log 'pcd_render' point cloud if available
-        if obs_pcd_render is not None:
+        if obs_pcd_render is not None and should_visualize("pcd_render"):
             pcd_render_frame = obs_pcd_render[i]
 
             if pcd_render_frame.shape[1] >= 6:
@@ -106,16 +112,16 @@ def visualize_episode(f, episode_key, timeline="frame"):
                     rr.Points3D(positions, radii=0.005)
                 )
 
-        # Log cam4_image if available
-        if cam4_image is not None:
-            img = cam4_image[i]
+        # Log robot0_eye_in_hand_image if available
+        if robot0_eye_in_hand_image is not None and should_visualize("robot0_eye_in_hand_image"):
+            img = robot0_eye_in_hand_image[i]
             rr.log(
-                f"{episode_key}/cam4_image",
+                f"{episode_key}/robot0_eye_in_hand_image",
                 rr.Image(img)
             )
 
         # Log robot end-effector pose from observations
-        if eef_pos is not None and eef_quat is not None:
+        if eef_pos is not None and eef_quat is not None and should_visualize("robot_eef"):
             t = eef_pos[i]
             q = eef_quat[i]  # [qx, qy, qz, qw] or [qw, qx, qy, qz] depending on convention
 
@@ -140,7 +146,7 @@ def visualize_episode(f, episode_key, timeline="frame"):
 
         # Log hand pose from actions if actions contain pose data
         # Assuming actions are [tx, ty, tz, qx, qy, qz, qw]
-        if actions.shape[1] >= 7:
+        if actions.shape[1] >= 7 and should_visualize("action_pose"):
             action = actions[i]
             t = action[:3]
             q = action[3:7]  # [qx, qy, qz, qw]
@@ -165,7 +171,7 @@ def visualize_episode(f, episode_key, timeline="frame"):
                 )
 
         # Log states if available (optional)
-        if "states" in ep_grp:
+        if "states" in ep_grp and should_visualize("robot_state"):
             states = np.array(ep_grp["states"])
             if states.shape[1] >= 7:
                 state = states[i]
@@ -204,6 +210,12 @@ def main():
         default="robomimic_viz",
         help="Rerun application ID (default: robomimic_viz)"
     )
+    parser.add_argument(
+        "--modalities",
+        type=str,
+        default=None,
+        help="Comma-separated list of modalities to visualize. Options: pcd, pcd_render, robot0_eye_in_hand_image, robot_eef, action_pose, robot_state. Default: all"
+    )
 
     args = parser.parse_args()
 
@@ -211,6 +223,12 @@ def main():
     if not hdf5_path.exists():
         print(f"Error: HDF5 file not found: {hdf5_path}")
         sys.exit(1)
+
+    # Parse modalities
+    modalities = None
+    if args.modalities is not None:
+        modalities = [m.strip() for m in args.modalities.split(",")]
+        print(f"Selected modalities: {modalities}")
 
     # Initialize rerun
     rr.init(args.app_id, spawn=True)
@@ -261,7 +279,7 @@ def main():
             if ep_key not in all_episodes:
                 print(f"Warning: Episode {ep_key} not found, skipping")
                 continue
-            visualize_episode(f, ep_key)
+            visualize_episode(f, ep_key, modalities=modalities)
 
         print()
         print("Visualization complete!")
