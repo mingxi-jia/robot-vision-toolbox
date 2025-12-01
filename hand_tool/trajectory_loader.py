@@ -85,7 +85,7 @@ class ObservationProcessor:
         """
         self.workspace = workspace if not is_simulation else SIM_WORKSPACE
         self.fix_point_num = fix_point_num
-        self.ih_size = (84,84)
+        self.ih_size = (84, 84)
         self.robot_filter = RobotArmSegmentation(is_simulation=is_simulation)
 
     def filter_pcd_by_workspace(self, pcd: np.ndarray) -> np.ndarray:
@@ -156,7 +156,10 @@ class ObservationProcessor:
         top = (h - min_dim) // 2
         left = (w - min_dim) // 2
         cropped = image[top:top+min_dim, left:left+min_dim]
-        if image.ndim == 2:  # depth image (single channel)
+        if image.shape[2] == 1:
+            resized = np.array(Image.fromarray(cropped.squeeze(-1)).resize(target_size, Image.BILINEAR))
+            resized = resized[:, :, None]
+        elif image.ndim == 2:  # depth image (single channel)
             resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
         else:  # RGB image (3 channels)
             resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
@@ -178,7 +181,7 @@ class ObservationProcessor:
             rgb_resized = self.resize_image(rgb_dict[cam])
             depth_resized = self.resize_image(depth_dict[cam])
 
-            if cam == 'cam4':
+            if cam in ['cam4', 'robot0_eye_in_hand_image']:
                 rgb_resized, depth_resized, is_contact = self.localize_wrist_cam(rgb_resized, depth_resized)
 
             rgb_dict[cam] = rgb_resized
