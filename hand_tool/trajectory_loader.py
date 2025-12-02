@@ -156,11 +156,12 @@ class ObservationProcessor:
         top = (h - min_dim) // 2
         left = (w - min_dim) // 2
         cropped = image[top:top+min_dim, left:left+min_dim]
-        if image.shape[2] == 1:
+        if image.ndim == 2:  # depth image (single channel)
+            resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
+        elif image.shape[2] == 1:
             resized = np.array(Image.fromarray(cropped.squeeze(-1)).resize(target_size, Image.BILINEAR))
             resized = resized[:, :, None]
-        elif image.ndim == 2:  # depth image (single channel)
-            resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
+        
         else:  # RGB image (3 channels)
             resized = np.array(Image.fromarray(cropped).resize(target_size, Image.BILINEAR))
         return resized
