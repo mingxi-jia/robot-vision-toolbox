@@ -129,8 +129,13 @@ class RealToRobomimicConverter:
             data_grp = f_out.create_group("data")
 
             bar = tqdm(total=len(self.episode_list), desc="Writing episodes")
-            for episode_idx, episode_name in enumerate(self.episode_list):
+            episode_idx = 0
+            for episode_name in self.episode_list:
                 traj = trajectories[episode_name]
+                if len(traj["actions"]) < 16:
+                    print(f"Skipping episode {episode_name} due to insufficient length "
+                          f"({len(traj['actions'])} < 16)")
+                    continue
 
                 ep = f"demo_{episode_idx}"
                 ep_data_grp = data_grp.create_group(ep)
@@ -151,6 +156,7 @@ class RealToRobomimicConverter:
                 ep_data_grp.attrs["num_samples"] = traj["actions"].shape[0]
                 tqdm.write(f"ep {episode_idx}: wrote {ep_data_grp.attrs['num_samples']} "
                             f"transitions to group {ep}")
+                episode_idx += 1
                 bar.update(1)
             bar.close()
 

@@ -170,9 +170,9 @@ class ObservationProcessor:
         depth_threshold = 0.3
         mask = depth > depth_threshold
         is_blind = np.mean(mask) > 0.5
-        if is_blind:
-            rgb = np.zeros_like(rgb)
-            depth = np.ones_like(depth) * depth_threshold
+        # if is_blind:
+        #     rgb = np.zeros_like(rgb)
+        #     depth = np.ones_like(depth) * depth_threshold
         is_contact = not is_blind
         return rgb, depth, is_contact
 
@@ -520,7 +520,7 @@ class TrajectoryLoader:
             'robot0_eef_pos': ee_pos_seq[:, :3].copy(),
             'robot0_eef_quat': ee_pos_seq[:, 3:7].copy(),
             'robot0_gripper_qpos': grasps_state.copy().repeat(2, axis=1), # repeat to match mimicgen format
-            'is_contact': np.zeros([traj_length, 1]).astype(np.float32),
+            'is_contact': np.ones([traj_length, 1]).astype(np.float32), # assign all to one since hand is always useful
         }
 
         pcd_dict = {
